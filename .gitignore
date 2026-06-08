@@ -1,0 +1,137 @@
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+.env.venv
+
+# Frontend - Node.js / Vite
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+frontend/dist/
+
+# Frontend - Vite
+frontend/.vite/
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# Mobile - React Native
+mobile/node_modules/
+mobile/npm-debug.log*
+mobile/yarn-debug.log*
+mobile/yarn-error.log*
+mobile/.pnpm-debug.log*
+
+# Mobile - Android
+android/build/
+android/.gradle/
+android/app/build/
+android/local.properties
+android/.DS_Store
+android/captures/
+android/.externalNativeBuild/
+android/.cxx/
+android/*.jks
+android/*.keystore
+
+# Mobile - iOS
+ios/build/
+ios/Pods/
+ios/.symlinks/
+ios/.env
+ios/Flutter/Generated.xcconfig
+ios/Flutter/ephemeral/
+
+# Mobile - General
+mobile/.watchmanconfig
+mobile/.react-native-debugger-port
+mobile/.haste_cache
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+database.db
+
+# Logs
+*.log
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+.gitkeep
+
+# IDE-specific files
+.vscode/settings.json
+.idea/
+
+# Build artifacts
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+
+# Gradle
+.gradle/
+gradle/
+
+# Project-specific
+quartiers_coords.json
+.python-version
