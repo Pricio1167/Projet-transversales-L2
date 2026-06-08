@@ -28,16 +28,71 @@ jwt = JWTManager(app)
 graph = create_antananarivo_graph()
 
 
+def _ensure_db_schema():
+    """Ajoute les colonnes role/blocked si la base a ete creee avant init_db.sql."""
+    try:
+        execute_query(
+            "ALTER TABLE utilisateurs ADD COLUMN IF NOT EXISTS blocked BOOLEAN DEFAULT FALSE"
+        )
+        execute_query(
+            "ALTER TABLE utilisateurs ADD COLUMN IF NOT EXISTS role VARCHAR(50) NOT NULL DEFAULT 'user'"
+        )
+    except Exception:
+        pass
+
+
 def _ensure_default_admin():
     try:
+        _ensure_db_schema()
         existing = execute_one("SELECT id FROM utilisateurs WHERE email = %s", ("admin@admin.com",))
         if not existing:
             register_user("Administrateur", "admin@admin.com", "admin123", role="admin")
+        else:
+            execute_query(
+                "UPDATE utilisateurs SET role = 'admin', blocked = FALSE WHERE email = %s",
+                ("admin@admin.com",),
+            )
     except Exception:
         pass
 
 
 _ensure_default_admin()
+
+
+def _is_user_blocked(user_id):
+    try:
+        row = execute_one("SELECT blocked FROM utilisateurs WHERE id = %s", (user_id,))
+        return bool(row and row.get("blocked") is True)
+    except Exception:
+        return False
+
+
+def _reset_trafic_edge(src, dest):
+    """Restaure le poids d'une arete dans le graphe et desactive le trafic en base."""
+    if graph.get_poids(src, dest) is None and graph.get_poids(dest, src) is not None:
+        src, dest = dest, src
+    graph.reset_edge_weight(src, dest)
+    try:
+        execute_query(
+            "UPDATE trafic SET actif = FALSE WHERE src = %s AND dest = %s AND actif = TRUE",
+            (src, dest),
+        )
+    except Exception:
+        pass
+
+
+@app.before_request
+def _reject_blocked_users():
+    if request.method == "OPTIONS":
+        return None
+    try:
+        verify_jwt_in_request(optional=True)
+        user_id = get_jwt_identity()
+        if user_id and _is_user_blocked(user_id):
+            return jsonify({"erreur": "Compte bloque par l'administrateur"}), 403
+    except Exception:
+        pass
+    return None
 
 
 def _is_admin_user_id(user_id):
@@ -272,6 +327,56 @@ def admin_trajets():
     return jsonify({"trajets": rows})
 
 
+@app.route('/admin/trajets/<int:trajet_id>', methods=['DELETE'])
+@jwt_required()
+def admin_trajet_delete(trajet_id):
+    """Annule/supprime un trajet enregistre."""
+    err = _require_admin()
+    if err:
+        return err
+    row = execute_one(
+        "SELECT id, depart, destination FROM trajets WHERE id = %s",
+        (trajet_id,),
+    )
+    if not row:
+        return jsonify({"erreur": "Trajet introuvable"}), 404
+    execute_query("DELETE FROM trajets WHERE id = %s", (trajet_id,))
+    _audit(
+        "trajet_delete",
+        {"trajet_id": trajet_id, "depart": row["depart"], "destination": row["destination"]},
+    )
+    return jsonify({"message": "Trajet annule", "id": trajet_id})
+
+
+@app.route('/admin/trafic', methods=['GET'])
+@jwt_required()
+def admin_trafic_list():
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        limit = int(request.args.get("limit", 100))
+    except Exception:
+        limit = 100
+    limit = max(1, min(limit, 500))
+    trafics = execute_query(
+        """
+        SELECT t.id, t.src, t.dest, t.poids_original, t.poids_actuel, t.actif, t.created_at,
+               u.id AS utilisateur_id, u.nom AS utilisateur_nom, u.email AS utilisateur_email
+        FROM trafic t
+        LEFT JOIN utilisateurs u ON t.utilisateur_id = u.id
+        WHERE t.actif = TRUE
+        ORDER BY t.created_at DESC
+        LIMIT %s
+        """,
+        (limit,),
+        fetch=True,
+    ) or []
+    for t in trafics:
+        t["created_at"] = str(t.get("created_at"))
+    return jsonify({"trafics": trafics})
+
+
 @app.route('/admin/trafic/clear', methods=['POST'])
 @jwt_required()
 def admin_trafic_clear():
@@ -280,11 +385,17 @@ def admin_trafic_clear():
         return err
 
     try:
+        active = execute_query(
+            "SELECT id, src, dest FROM trafic WHERE actif = TRUE",
+            fetch=True,
+        ) or []
+        for t in active:
+            _reset_trafic_edge(t["src"], t["dest"])
         execute_query("UPDATE trafic SET actif = FALSE WHERE actif = TRUE")
     except Exception:
         pass
     _audit("trafic_clear_all", {})
-    return jsonify({"message": "Tous les trafics ont ete desactives"})
+    return jsonify({"message": "Tous les trafics ont ete desactives et le graphe restaure"})
 
 
 @app.route('/admin/trafic/<int:id>', methods=['DELETE'])
@@ -298,9 +409,10 @@ def admin_trafic_delete(id):
         row = execute_one("SELECT id, src, dest FROM trafic WHERE id = %s", (id,))
         if not row:
             return jsonify({"erreur": "Trafic introuvable"}), 404
+        _reset_trafic_edge(row["src"], row["dest"])
         execute_query("DELETE FROM trafic WHERE id = %s", (id,))
         _audit("trafic_delete", {"trafic_id": id, "src": row["src"], "dest": row["dest"]})
-        return jsonify({"message": "Trafic supprime", "id": id})
+        return jsonify({"message": "Trafic supprime et graphe restaure", "id": id})
     except Exception as e:
         return jsonify({"erreur": f"Erreur lors de la suppression: {str(e)}"}), 500
 
@@ -363,10 +475,20 @@ def admin_data_clear():
         if not name:
             continue
         try:
+            if name == "trafic":
+                active = execute_query(
+                    "SELECT src, dest FROM trafic WHERE actif = TRUE",
+                    fetch=True,
+                ) or []
+                for edge in active:
+                    _reset_trafic_edge(edge["src"], edge["dest"])
             execute_query(f"DELETE FROM {name}")
             cleared.append(name)
         except Exception:
             pass
+    if "trafic" in cleared:
+        global graph
+        graph = create_antananarivo_graph()
     _audit("data_clear", {"tables": cleared})
     return jsonify({"message": "Nettoyage termine", "cleared": cleared})
 
@@ -912,13 +1034,7 @@ def reset_trafic():
     src = data.get('src')
     dest = data.get('dest')
     if src and dest:
-        if graph.get_poids(src, dest) is None and graph.get_poids(dest, src) is not None:
-            src, dest = dest, src
-        graph.reset_edge_weight(src, dest)
-        try:
-            execute_query("UPDATE trafic SET actif = FALSE WHERE src = %s AND dest = %s AND actif = TRUE", (src, dest))
-        except Exception:
-            pass
+        _reset_trafic_edge(src, dest)
         return jsonify({"message": f"Route {src} → {dest} restaurée"})
     return jsonify({"erreur": "Paramètres manquants"}), 400
 

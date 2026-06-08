@@ -7,17 +7,18 @@ import {
   adminOverview,
   adminBlockUser,
   adminAudit,
+  adminDeleteTrajet,
   adminExportCsv,
+  adminGetTrafic,
   adminPurgeUser,
   adminReloadGraph,
   adminSetUserRole,
   adminTraficDelete,
   adminTrajets,
   adminUsers,
+  fetchMe,
   getQuartiers,
-  getTraficActif,
   simulerTraficAvance,
-  getUser,
   isAdmin,
 } from "../api";
 
@@ -123,11 +124,11 @@ export default function Admin() {
       adminAudit(60),
       getQuartiers(),
     ]);
-    const [trafic] = await Promise.all([getTraficActif()]);
+    const trafic = await adminGetTrafic(100);
     if (q?.quartiers) setNodes(Object.keys(q.quartiers).sort());
     const errors = [o?.erreur, u?.erreur, t?.erreur, a?.erreur, trafic?.erreur].filter(Boolean);
     if (errors.length) setMsg(errors.join(" — "));
-    setOverview(o?.stats ? o : null);
+    setOverview(o?.erreur ? null : o);
     setUsers(u?.users || []);
     setTrajets(t?.trajets || []);
     setEvents(a?.events || []);
@@ -140,12 +141,16 @@ export default function Admin() {
   };
 
   useEffect(() => {
-    if (!isAdmin()) {
-      navigate("/");
-      return;
-    }
-    setCurrentUser(getUser());
-    load();
+    const init = async () => {
+      const me = await fetchMe();
+      if (!me || !isAdmin()) {
+        navigate("/");
+        return;
+      }
+      setCurrentUser(me);
+      await load();
+    };
+    init();
   }, [navigate]);
 
   const clearTrafic = async () => {
@@ -170,6 +175,7 @@ export default function Admin() {
   };
 
   const purgeUser = async (userId) => {
+    if (!window.confirm("Supprimer toutes les données de cet utilisateur (trajets, trafic, etc.) ?")) return;
     const res = await adminPurgeUser(userId);
     if (res?.message) setMsg(res.message);
     if (res?.erreur) setMsg(res.erreur);
@@ -177,6 +183,8 @@ export default function Admin() {
   };
 
   const toggleBlock = async (userId, nextBlocked) => {
+    const action = nextBlocked ? "bloquer" : "débloquer";
+    if (!window.confirm(`Voulez-vous ${action} cet utilisateur ?`)) return;
     const res = await adminBlockUser(userId, nextBlocked);
     if (res?.message) setMsg(res.message);
     if (res?.erreur) setMsg(res.erreur);
@@ -191,7 +199,16 @@ export default function Admin() {
   };
 
   const deleteTrafic = async (id) => {
+    if (!window.confirm("Supprimer cet embouteillage et restaurer la route ?")) return;
     const res = await adminTraficDelete(id);
+    if (res?.message) setMsg(res.message);
+    if (res?.erreur) setMsg(res.erreur);
+    await load();
+  };
+
+  const cancelTrajet = async (id) => {
+    if (!window.confirm("Annuler ce trajet ?")) return;
+    const res = await adminDeleteTrajet(id);
     if (res?.message) setMsg(res.message);
     if (res?.erreur) setMsg(res.erreur);
     await load();
@@ -289,6 +306,9 @@ export default function Admin() {
           <button style={styles.buttonDanger} onClick={() => clearData(["recherches_alternatives"])}>
             Vider recherches alternatives
           </button>
+          <button style={styles.buttonDanger} onClick={() => clearData(["trafic"])}>
+            Vider trafic
+          </button>
         </div>
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button style={styles.buttonSecondary} onClick={() => downloadCsv("users")}>
@@ -304,18 +324,34 @@ export default function Admin() {
       </div>
 
       <div style={styles.card}>
-        <div style={styles.cardTitle}>Derniers trajets (global)</div>
+        <div style={styles.cardTitle}>Trajets ({trajets.length})</div>
         {trajets.length === 0 ? (
           <div style={styles.empty}>Aucun trajet.</div>
         ) : (
-          trajets.slice(0, 15).map((t) => (
+          trajets.map((t) => (
             <div key={t.id} style={styles.item}>
               <div style={styles.itemTitle}>
                 {t.depart} → {t.destination}
               </div>
               <div style={styles.itemMeta}>
-                {t.distance} km · {t.etapes} étapes · {t.email || "—"}
+                {t.distance} km · {t.etapes} étapes · {t.nom || "—"} ({t.email || "—"}) ·{" "}
+                {t.created_at ? new Date(t.created_at).toLocaleString("fr-FR") : "—"}
               </div>
+              <button
+                style={{
+                  ...styles.buttonSecondary,
+                  background: "#fee2e2",
+                  color: "#b91c1c",
+                  border: "1px solid #fecaca",
+                  padding: "6px 12px",
+                  minWidth: 80,
+                  fontSize: 11,
+                  marginTop: 6,
+                }}
+                onClick={() => cancelTrajet(t.id)}
+              >
+                Annuler
+              </button>
             </div>
           ))
         )}
@@ -352,11 +388,11 @@ export default function Admin() {
       </div>
 
       <div style={styles.card}>
-        <div style={styles.cardTitle}>Trafic actif</div>
+        <div style={styles.cardTitle}>Trafic actif ({traficActif.length})</div>
         {traficActif.length === 0 ? (
           <div style={styles.empty}>Aucun trafic actif.</div>
         ) : (
-          traficActif.slice(0, 10).map((t) => (
+          traficActif.map((t) => (
             <div key={t.id} style={styles.item}>
               <div style={styles.itemTitle}>{t.src} → {t.dest}</div>
               <div style={styles.itemMeta}>
@@ -369,11 +405,13 @@ export default function Admin() {
       </div>
 
       <div style={styles.card}>
-        <div style={styles.cardTitle}>Utilisateurs</div>
+        <div style={styles.cardTitle}>Utilisateurs ({users.length})</div>
         {users.length === 0 ? (
           <div style={styles.empty}>Aucun utilisateur.</div>
         ) : (
-          users.slice(0, 50).map((u) => (
+          users.map((u) => {
+            const isPrimaryAdmin = (u.email || "").toLowerCase() === "admin@admin.com";
+            return (
             <div key={u.id} style={styles.item}>
               <div style={styles.itemTitle}>
                 {u.nom} {u.is_admin ? "(admin)" : ""}
@@ -430,7 +468,8 @@ export default function Admin() {
                       Rôle actuel : {u.role || "user"}
                     </span>
                     <span style={{ fontSize: 12, color: colors.texteMuted }}>
-                      Créé par : {u.utilisateur_nom || u.utilisateur_email || u.email || "-"}
+                      Inscrit le :{" "}
+                      {u.created_at ? new Date(u.created_at).toLocaleString("fr-FR") : "—"}
                     </span>
                     {currentUser?.id === u.id ? (
                       <span style={{ fontSize: 12, color: colors.texteMuted }}>
@@ -440,13 +479,32 @@ export default function Admin() {
                   </div>
                 </div>
               )}
-              {u.is_admin && (
+              {u.is_admin && !isPrimaryAdmin && (
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    style={{
+                      ...styles.buttonSecondary,
+                      background: "#f0f9ff",
+                      color: "#0c4a6e",
+                      border: "1px solid #bae6fd",
+                      padding: "10px 12px",
+                      minWidth: 120,
+                    }}
+                    onClick={() => changeUserRole(u.id, "user")}
+                    disabled={currentUser?.id === u.id}
+                  >
+                    Rétrograder en user
+                  </button>
+                </div>
+              )}
+              {u.is_admin && isPrimaryAdmin && (
                 <div style={{ marginTop: 10, color: colors.texteMuted, fontSize: 12 }}>
-                  Compte admin protégé.
+                  Compte admin principal protégé.
                 </div>
               )}
             </div>
-          ))
+          );
+          })
         )}
       </div>
 

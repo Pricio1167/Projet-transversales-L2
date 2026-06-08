@@ -46,6 +46,11 @@ def register_user(nom, email, password, role='user'):
             "SELECT id, nom, email FROM utilisateurs WHERE email = %s",
             (email,)
         )
+    if user:
+        role = (user.get("role") or "user").lower()
+        email_l = (user.get("email") or "").lower()
+        user["role"] = role
+        user["is_admin"] = role == "admin" or email_l == "admin@admin.com"
     return user, None
 
 def login_user(email, password):
@@ -60,9 +65,12 @@ def login_user(email, password):
     if not verify_password(password, user['mot_de_passe']):
         return None, "Email ou mot de passe incorrect"
 
+    role = (user.get('role') or 'user').lower()
+    email = (user.get('email') or '').lower()
     return {
         "id": user['id'],
         "nom": user['nom'],
         "email": user['email'],
-        "role": (user.get('role') or 'user').lower(),
+        "role": role,
+        "is_admin": role == 'admin' or email == 'admin@admin.com',
     }, None

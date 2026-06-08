@@ -115,6 +115,22 @@ export const login = async (email, password) => {
 
 export const logout = () => clearSession();
 
+export const fetchMe = async () => {
+  try {
+    const res = await fetchWithTimeout(`${API}/me`, { headers: authHeaders() });
+    const data = await parseResponse(res);
+    if (data.unauthorized) {
+      clearSession();
+      return null;
+    }
+    if (data.erreur) return null;
+    setUser(data);
+    return data;
+  } catch {
+    return null;
+  }
+};
+
 export const isAdmin = () => {
   const u = getUser();
   const role = (u?.role || "").toLowerCase();
@@ -344,6 +360,34 @@ export const adminTrajets = async () => {
     return data;
   } catch {
     return { erreur: "Erreur de connexion au serveur" };
+  }
+};
+
+export const adminDeleteTrajet = async (trajetId) => {
+  try {
+    const res = await fetchWithTimeout(`${API}/admin/trajets/${trajetId}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    const data = await parseResponse(res);
+    if (data.unauthorized) clearSession();
+    return data;
+  } catch {
+    return { erreur: "Erreur de connexion au serveur" };
+  }
+};
+
+export const adminGetTrafic = async (limit = 100) => {
+  try {
+    const res = await fetchWithTimeout(
+      `${API}/admin/trafic?limit=${encodeURIComponent(limit)}`,
+      { headers: authHeaders() }
+    );
+    const data = await parseResponse(res);
+    if (data.unauthorized) clearSession();
+    return data;
+  } catch {
+    return { erreur: "Erreur de connexion au serveur", trafics: [] };
   }
 };
 
