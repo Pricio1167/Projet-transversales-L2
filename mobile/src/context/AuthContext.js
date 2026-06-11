@@ -23,7 +23,15 @@ export function AuthProvider({ children }) {
         if (me?.unauthorized) {
           await clearSession();
         } else if (me && !me.erreur) {
-          setUserState({ id: me.id, nom: me.nom, email: me.email });
+          const fullUser = {
+            id: me.id,
+            nom: me.nom,
+            email: me.email,
+            role: me.role || stored?.role || "user",
+            is_admin: me.is_admin ?? stored?.is_admin ?? false,
+          };
+          await setUser(fullUser);
+          setUserState(fullUser);
         } else {
           setUserState(stored);
         }

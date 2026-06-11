@@ -1,8 +1,10 @@
 ﻿import { useState, useEffect, useRef, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { MapContainer, TileLayer, Polyline, CircleMarker, Popup, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
-import { MapPin, Flag, RefreshCcw, Compass, ArrowRight, Play } from "lucide-react";
-import { getQuartiers, calculerChemin, getItineraireRoutier, getCheminsAlternatifs } from "../api";
+import { RefreshCcw, Compass, ArrowRight, Play } from "lucide-react";
+import { getQuartiers, getItineraireRoutier, getCheminsAlternatifs } from "../api";
+import { useTrip, estimateDuree } from "../context/TripContext";
 
 const SIMULATION_COLORS = ["#334155", "#7C3AED", "#0891B2", "#D97706"];
 
@@ -136,12 +138,24 @@ function SearchSelect({ label, value, onChange, quartiersList }) {
   );
 }
 
+const cheminToCoords = (chemin, quartiersMap) =>
+  (chemin || []).filter((q) => quartiersMap[q]).map((q) => quartiersMap[q]);
+
 function Carte() {
+  const [searchParams] = useSearchParams();
+  const {
+    depart,
+    destination,
+    setDepart,
+    setDestination,
+    setGraphResults,
+    conseil,
+    alerte,
+    traficRoute,
+    cheminsGraph,
+  } = useTrip();
   const [quartiers, setQuartiers] = useState({});
-  const [connexions, setConnexions] = useState([]);
   const [quartiersList, setQuartiersList] = useState([]);
-  const [depart, setDepart] = useState("");
-  const [destination, setDestination] = useState("");
   const [resultat, setResultat] = useState(null);
   const [erreur, setErreur] = useState("");
   const [loading, setLoading] = useState(false);
@@ -153,12 +167,13 @@ function Carte() {
   const [showAlternatives, setShowAlternatives] = useState(true);
   const [traficEdges, setTraficEdges] = useState([]);
   const [simulating, setSimulating] = useState(false);
-  const [altPaths, setAltPaths] = useState([]);
+  const [graphAlts, setGraphAlts] = useState([]);
+  const [selectedGraphAlt, setSelectedGraphAlt] = useState(0);
+  const autoCalcDone = useRef(false);
 
   useEffect(() => {
     getQuartiers().then((data) => {
       setQuartiers(data.quartiers);
-      setConnexions(data.connexions);
       setQuartiersList(Object.keys(data.quartiers).sort());
       setLoadingData(false);
     });
@@ -172,7 +187,19 @@ function Carte() {
     })();
   }, []);
 
-  const calculer = async () => {
+  useEffect(() => {
+    const dep = searchParams.get("depart");
+    const dest = searchParams.get("destination");
+    if (dep) setDepart(dep);
+    if (dest) setDestination(dest);
+    if (searchParams.get("alts") === "1") setShowAlternatives(true);
+  }, [searchParams, setDepart, setDestination]);
+
+  useEffect(() => {
+    if (cheminsGraph?.length > 0) setGraphAlts(cheminsGraph);
+  }, [cheminsGraph]);
+
+  const calculer = useCallback(async () => {
     if (!depart || !destination) return;
     setErreur("");
     setResultat(null);
@@ -180,14 +207,22 @@ function Carte() {
     setPathSegments([]);
     setItineraireRoutes([]);
     setSelectedItineraire(0);
+    setSelectedGraphAlt(0);
     setSimulating(false);
-    setAltPaths([]);
+    setGraphAlts([]);
     setLoading(true);
 
+    const routeEmbouteillee = traficRoute || null;
     const [osrmRes, graphRes] = await Promise.allSettled([
       getItineraireRoutier(depart, destination),
-      calculerChemin(depart, destination),
+      getCheminsAlternatifs(depart, destination, routeEmbouteillee),
     ]);
+
+    if (graphRes.status === "fulfilled" && graphRes.value?.chemins?.length > 0) {
+      setGraphAlts(graphRes.value.chemins);
+      setGraphResults(graphRes.value);
+      setShowAlternatives(true);
+    }
 
     if (osrmRes.status === "fulfilled" && osrmRes.value && !osrmRes.value.erreur && osrmRes.value.routes?.length) {
       const routes = osrmRes.value.routes;
@@ -201,17 +236,18 @@ function Carte() {
         summary: routes[0].summary || "",
         chemin: routes[0].chemin,
       });
-    } else if (graphRes.status === "fulfilled" && graphRes.value && !graphRes.value.erreur && graphRes.value.chemin) {
-      const data = graphRes.value;
+    } else if (graphRes.status === "fulfilled" && graphRes.value?.chemins?.length > 0) {
+      const best = graphRes.value.chemins[0];
       setResultat({
-        ...data,
-        duree: Math.round((data.distance / 30) * 60),
-        etapes: data.chemin.length,
+        distance: best.distance,
+        duree: estimateDuree(best.distance),
+        etapes: best.chemin.length,
+        chemin: best.chemin,
       });
-      const coords = data.chemin.filter((q) => quartiers[q]).map((q) => quartiers[q]);
+      const coords = cheminToCoords(best.chemin, quartiers);
       setCheminCoords(coords);
-      const segments = data.chemin.slice(0, -1)
-        .map((q, index) => { const next = data.chemin[index + 1]; return [quartiers[q], quartiers[next]]; })
+      const segments = best.chemin.slice(0, -1)
+        .map((q, index) => { const next = best.chemin[index + 1]; return [quartiers[q], quartiers[next]]; })
         .filter((segment) => segment[0] && segment[1]);
       setPathSegments(segments);
     } else {
@@ -220,7 +256,17 @@ function Carte() {
     }
 
     setLoading(false);
-  };
+  }, [depart, destination, quartiers, traficRoute, setGraphResults]);
+
+  useEffect(() => {
+    if (loadingData || autoCalcDone.current) return;
+    const dep = searchParams.get("depart") || depart;
+    const dest = searchParams.get("destination") || destination;
+    if (searchParams.get("auto") === "1" && dep && dest) {
+      autoCalcDone.current = true;
+      calculer();
+    }
+  }, [loadingData, searchParams, depart, destination, calculer]);
 
   const reset = () => {
     setDepart("");
@@ -231,7 +277,7 @@ function Carte() {
     setPathSegments([]);
     setItineraireRoutes([]);
     setSimulating(false);
-    setAltPaths([]);
+    setGraphAlts([]);
   };
 
   const dureeMin = resultat ? Math.round((resultat.duree || (resultat.distance / 30) * 60)) : 0;
@@ -243,19 +289,18 @@ function Carte() {
   const etaDate = new Date(now.getTime() + (activeDuree || dureeMin) * 60000);
   const etaStr = etaDate.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 
-  const toggleSimulation = async () => {
+  const toggleSimulation = () => {
     if (!cheminCoords || cheminCoords.length < 2) return;
-    if (simulating) {
-      setSimulating(false);
-      setAltPaths([]);
-      return;
-    }
-    setSimulating(true);
-    // Charger les chemins alternatifs pour éviter le trafic
-    const res = await getCheminsAlternatifs(depart, destination);
-    if (res.chemins?.length > 1) {
-      setAltPaths(res.chemins.slice(1));
-    }
+    setSimulating((s) => !s);
+    if (!simulating) setShowAlternatives(true);
+  };
+
+  const selectGraphAlt = (idx) => {
+    setSelectedGraphAlt(idx);
+    const alt = graphAlts[idx];
+    if (!alt) return;
+    const coords = cheminToCoords(alt.chemin, quartiers);
+    if (coords.length > 1) setCheminCoords(coords);
   };
 
   return (
@@ -315,6 +360,17 @@ function Carte() {
 
           {erreur && <div style={styles.error}> {erreur}</div>}
 
+          {conseil && (
+            <div style={{ ...styles.highlight, marginTop: 12, background: "#E8F5E9", borderColor: "#86EFAC" }}>
+              <strong style={{ color: theme.success }}>Suggestion SIOTUM</strong>
+              <div style={{ marginTop: 6, fontSize: 13 }}>{conseil}</div>
+            </div>
+          )}
+
+          {alerte && (
+            <div style={{ ...styles.error, marginTop: 12 }}>{alerte.message}</div>
+          )}
+
           {itineraireRoutes.length > 1 && (
             <div style={styles.card}>
               <div style={styles.cardTitle}>Choix d'itinéraire</div>
@@ -334,6 +390,30 @@ function Carte() {
                       {route.est_optimal ? "Recommandé" : `Alternative ${idx}`}
                     </span>
                     <span style={{ fontWeight: 700 }}>{route.distance} km · {route.duree || "?"} min</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {graphAlts.length > 0 && (
+            <div style={styles.card}>
+              <div style={styles.cardTitle}>Chemins alternatifs graphe ({graphAlts.length})</div>
+              <div style={{ display: "grid", gap: 10 }}>
+                {graphAlts.map((alt, idx) => (
+                  <button key={`galt-${idx}`} type="button"
+                    style={{
+                      ...styles.buttonSmall,
+                      borderColor: idx === selectedGraphAlt ? SIMULATION_COLORS[(idx + 1) % SIMULATION_COLORS.length] : theme.border,
+                      background: idx === selectedGraphAlt ? `${SIMULATION_COLORS[(idx + 1) % SIMULATION_COLORS.length]}15` : theme.surface,
+                    }}
+                    onClick={() => selectGraphAlt(idx)}
+                  >
+                    <span>
+                      {idx === 0 ? "Recommandé" : `Alt. ${idx}`}
+                      {alt.evite_trafic ? " · Sans trafic" : " · Trafic"}
+                    </span>
+                    <span style={{ fontWeight: 700 }}>{alt.distance} km · ~{estimateDuree(alt.distance)} min</span>
                   </button>
                 ))}
               </div>
@@ -454,19 +534,18 @@ function Carte() {
               return <Polyline key={`trafic-${i}`} positions={[a, b]} color={theme.danger} weight={4} opacity={0.9} dashArray="6" />;
             })}
 
-            {simulating && altPaths.length > 0 && (
-              altPaths.map((r, idx) => {
-                const coords = r.chemin
-                  ? r.chemin.filter((q) => quartiers[q]).map((q) => quartiers[q])
-                  : [];
+            {showAlternatives && graphAlts.length > 0 && (
+              graphAlts.map((r, idx) => {
+                const coords = cheminToCoords(r.chemin, quartiers);
                 if (coords.length < 2) return null;
                 const color = SIMULATION_COLORS[(idx + 1) % SIMULATION_COLORS.length];
+                const isActive = idx === selectedGraphAlt;
                 return (
-                  <Polyline key={`alt-${idx}`} positions={coords}
+                  <Polyline key={`galt-${idx}`} positions={coords}
                     color={color}
-                    weight={4}
-                    opacity={0.85}
-                    dashArray={[8, 6]}
+                    weight={isActive ? 5 : 3}
+                    opacity={isActive ? 0.9 : 0.55}
+                    dashArray={isActive ? null : [8, 6]}
                   />
                 );
               })

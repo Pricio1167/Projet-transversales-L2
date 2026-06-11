@@ -59,7 +59,8 @@ function MainTabs() {
   const { user } = useAuth();
   const role = (user?.role || "").toLowerCase();
   const email = (user?.email || "").toLowerCase();
-  const isAdmin = role === "admin" || email === "admin@admin.com";
+  const isAdmin =
+    role === "admin" || email === "admin@admin.com" || !!user?.is_admin;
 
   return (
     <Tab.Navigator

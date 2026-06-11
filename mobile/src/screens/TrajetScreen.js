@@ -7,6 +7,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { getCheminsAlternatifs, calculerChemin } from "../api";
+import { useTrip, estimateDuree } from "../context/TripContext";
 import useQuartiers from "../hooks/useQuartiers";
 import QuartierPicker from "../components/QuartierPicker";
 import CheminSteps from "../components/CheminSteps";
@@ -15,12 +16,17 @@ import { colors, spacing } from "../theme";
 
 export default function TrajetScreen({ navigation }) {
   const { quartiersList } = useQuartiers();
-  const [depart, setDepart] = useState("");
-  const [destination, setDestination] = useState("");
+  const {
+    depart,
+    destination,
+    setDepart,
+    setDestination,
+    setGraphResults,
+    conseil,
+    alerte,
+  } = useTrip();
   const [resultat, setResultat] = useState(null);
   const [alternatives, setAlternatives] = useState([]);
-  const [conseil, setConseil] = useState("");
-  const [alerte, setAlerte] = useState(null);
   const [erreur, setErreur] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -36,8 +42,7 @@ export default function TrajetScreen({ navigation }) {
     setErreur("");
     setResultat(null);
     setAlternatives([]);
-    setConseil("");
-    setAlerte(null);
+    setGraphResults(null);
     setLoading(true);
 
     const data = await getCheminsAlternatifs(depart, destination);
@@ -47,12 +52,12 @@ export default function TrajetScreen({ navigation }) {
       else if (simple.chemin) {
         setResultat(simple);
         setAlternatives([]);
+        setGraphResults({ chemins: [simple] });
       } else setErreur("Aucun chemin trouvé");
     } else if (data.chemins?.length > 0) {
       setResultat(data.chemins[0]);
       setAlternatives(data.chemins.slice(1));
-      setConseil(data.conseil || data.recommandation?.message || "");
-      if (data.alerte) setAlerte(data.alerte);
+      setGraphResults(data);
     } else {
       setErreur("Aucun chemin trouvé");
     }
@@ -119,7 +124,7 @@ export default function TrajetScreen({ navigation }) {
             </View>
             <CheminSteps chemin={resultat.chemin} maxVisible={10} />
             <Text style={styles.meta}>
-              {resultat.distance} km ·{" "}
+              {resultat.distance} km · ~{estimateDuree(resultat.distance)} min ·{" "}
               {resultat.etapes ?? resultat.chemin.length - 1} étapes
             </Text>
             <PrimaryButton
@@ -149,7 +154,9 @@ export default function TrajetScreen({ navigation }) {
                   ) : (
                     <Text style={styles.badgeOrangeSmall}>Trafic</Text>
                   )}
-                  <Text style={styles.altDist}>{alt.distance} km</Text>
+                  <Text style={styles.altDist}>
+                    {alt.distance} km · ~{estimateDuree(alt.distance)} min
+                  </Text>
                 </View>
                 <CheminSteps chemin={alt.chemin} maxVisible={4} compact />
               </Pressable>

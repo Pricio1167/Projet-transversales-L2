@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Polyline, CircleMarker, Popup, useMap } from "
 import "leaflet/dist/leaflet.css";
 import { RefreshCcw, ArrowRight } from "lucide-react";
 import { getQuartiers, calculerChemin, getItineraireRoutier, getCheminsAlternatifs } from "../api";
+import { useTrip } from "../context/TripContext";
 
 const SIMULATION_COLORS = ["#334155", "#7C3AED", "#0891B2", "#D97706"];
 
@@ -60,8 +61,7 @@ function Graphe() {
   const [quartiers, setQuartiers] = useState({});
   const [connexions, setConnexions] = useState([]);
   const [nodes, setNodes] = useState([]);
-  const [depart, setDepart] = useState("");
-  const [destination, setDestination] = useState("");
+  const { depart, destination, setDepart, setDestination } = useTrip();
   const [chemin, setChemin] = useState([]);
   const [pathInfo, setPathInfo] = useState(null);
   const [loading, setLoading] = useState(false);

@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { getQuartiersList, simulerTrafic, getCheminsAlternatifs, getTraficActif, resetTrafic } from "../api";
+import { useTrip, estimateDuree } from "../context/TripContext";
 import SearchSelect from "../components/SearchSelect";
 
 // Palette IHM
@@ -260,16 +261,23 @@ const styles = {
 
 function Trafic() {
   const navigate = useNavigate();
+  const {
+    depart,
+    destination,
+    setDepart,
+    setDestination,
+    setGraphResults,
+    setTraficRoute,
+    conseil,
+    alerte,
+  } = useTrip();
   const [nodes, setNodes] = useState([]);
   const [traficSrc, setTraficSrc] = useState("");
   const [traficDest, setTraficDest] = useState("");
   const [traficPoids, setTraficPoids] = useState("");
   const [traficMsg, setTraficMsg] = useState("");
   const [traficError, setTraficError] = useState("");
-  const [traficAlerte, setTraficAlerte] = useState(null);
   const [traficActif, setTraficActif] = useState([]);
-  const [depart, setDepart] = useState("");
-  const [destination, setDestination] = useState("");
   const [resultat, setResultat] = useState(null);
   const [alternatives, setAlternatives] = useState([]);
   const [loadingTrafic, setLoadingTrafic] = useState(false);
@@ -300,7 +308,6 @@ function Trafic() {
     
     setTraficError("");
     setTraficMsg("");
-    setTraficAlerte(null);
     setAlternatives([]);
     setLoadingTrafic(true);
 
@@ -326,9 +333,8 @@ function Trafic() {
         if (altData.chemins.length > 1) {
           setAlternatives(altData.chemins.slice(1));
         }
-        if (altData.alerte) {
-          setTraficAlerte(altData.alerte);
-        }
+        setGraphResults(altData);
+        setTraficRoute([traficSrc, traficDest]);
       }
       setLoadingAlternatives(false);
     }
@@ -345,6 +351,15 @@ function Trafic() {
     if (data.message) {
       setTraficMsg(data.message);
       await chargerTraficActif();
+      setTraficRoute(null);
+      if (depart && destination) {
+        const altData = await getCheminsAlternatifs(depart, destination);
+        if (altData.chemins?.length) {
+          setResultat(altData.chemins[0]);
+          setAlternatives(altData.chemins.slice(1) || []);
+          setGraphResults(altData);
+        }
+      }
     } else {
       setTraficError(data.erreur);
     }
@@ -352,7 +367,7 @@ function Trafic() {
 
   const voirSurCarte = () => {
     if (depart && destination) {
-      navigate(`/carte?depart=${encodeURIComponent(depart)}&destination=${encodeURIComponent(destination)}`);
+      navigate(`/carte?depart=${encodeURIComponent(depart)}&destination=${encodeURIComponent(destination)}&auto=1&alts=1`);
     } else {
       navigate("/carte");
     }
@@ -426,14 +441,7 @@ function Trafic() {
             <div style={styles.error}><i className="fas fa-circle-exclamation"></i> {traficError}</div>
           )}
           
-          {traficAlerte && (
-            <div style={styles.alertDanger}>
-              <i className="fas fa-car-side"></i>
-              <div><strong>{traficAlerte.message}</strong></div>
-            </div>
-          )}
-
-          {traficMsg && !traficError && !traficAlerte && (
+          {traficMsg && !traficError && (
             <div style={styles.success}><i className="fas fa-check-circle"></i> {traficMsg}</div>
           )}
 
@@ -486,6 +494,18 @@ function Trafic() {
             />
           </div>
 
+          {conseil && (
+            <div style={{ ...styles.success, marginTop: 12 }}>
+              <i className="fas fa-lightbulb"></i> {conseil}
+            </div>
+          )}
+
+          {alerte && (
+            <div style={{ ...styles.alertDanger, marginTop: 12 }}>
+              <i className="fas fa-car-side"></i> {alerte.message}
+            </div>
+          )}
+
           {loadingAlternatives && (
             <div style={styles.success}><i className="fas fa-spinner fa-spin"></i> Recherche d'alternatives...</div>
           )}
@@ -511,7 +531,7 @@ function Trafic() {
                 {resultat.chemin.length > 5 && <span style={styles.etape}>...</span>}
               </div>
               <div style={styles.metaInfo}>
-                <div style={styles.infoRow}><i className="fas fa-road"></i> <strong>{resultat.distance} km</strong></div>
+                <div style={styles.infoRow}><i className="fas fa-road"></i> <strong>{resultat.distance} km · ~{estimateDuree(resultat.distance)} min</strong></div>
                 <div style={styles.infoRow}><i className="fas fa-location-dot"></i> {resultat.etapes} étapes</div>
               </div>
             </div>
@@ -524,7 +544,7 @@ function Trafic() {
                 <div key={idx} style={styles.alternativeItem} onClick={() => setResultat(alt)}>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <span style={styles.alternativeBadge(idx === 0 ? colors.vert : colors.violet)}>Alternative {idx + 1}</span>
-                    <span style={{ fontWeight: 600 }}>{alt.distance} km</span>
+                    <span style={{ fontWeight: 600 }}>{alt.distance} km · ~{estimateDuree(alt.distance)} min</span>
                   </div>
                   <div style={{ fontSize: 11, color: colors.texteMuted, marginTop: 4 }}>
                     {alt.chemin.slice(0, 3).join(" → ")}...

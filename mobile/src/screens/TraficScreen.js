@@ -17,21 +17,31 @@ import {
   getTraficActif,
   getCheminsAlternatifs,
 } from "../api";
+import { useTrip, estimateDuree } from "../context/TripContext";
 import useQuartiers from "../hooks/useQuartiers";
 import QuartierPicker from "../components/QuartierPicker";
 import { colors, spacing } from "../theme";
 
 export default function TraficScreen({ navigation }) {
   const { quartiersList } = useQuartiers();
+  const {
+    depart,
+    destination,
+    setDepart,
+    setDestination,
+    setGraphResults,
+    setTraficRoute,
+    conseil,
+    alerte,
+  } = useTrip();
   const [traficSrc, setTraficSrc] = useState("");
   const [traficDest, setTraficDest] = useState("");
   const [traficPoids, setTraficPoids] = useState("");
-  const [depart, setDepart] = useState("");
-  const [destination, setDestination] = useState("");
   const [msg, setMsg] = useState("");
   const [erreur, setErreur] = useState("");
   const [traficActif, setTraficActif] = useState([]);
   const [resultat, setResultat] = useState(null);
+  const [alternatives, setAlternatives] = useState([]);
   const [loading, setLoading] = useState(false);
 
   const chargerTrafic = async () => {
@@ -44,6 +54,18 @@ export default function TraficScreen({ navigation }) {
       chargerTrafic();
     }, [])
   );
+
+  const recalculerAlternatives = async (src, dest) => {
+    if (!depart || !destination) return;
+    const routeEmbouteillee = src && dest ? [src, dest] : null;
+    const alt = await getCheminsAlternatifs(depart, destination, routeEmbouteillee);
+    if (alt.chemins?.length > 0) {
+      setResultat(alt.chemins[0]);
+      setAlternatives(alt.chemins.slice(1));
+      setGraphResults(alt);
+    }
+    if (src && dest) setTraficRoute([src, dest]);
+  };
 
   const appliquer = async () => {
     if (!traficSrc || !traficDest || !traficPoids) {
@@ -58,13 +80,7 @@ export default function TraficScreen({ navigation }) {
     else {
       setMsg(data.message || "Trafic applique");
       await chargerTrafic();
-      if (depart && destination) {
-        const alt = await getCheminsAlternatifs(depart, destination, [
-          traficSrc,
-          traficDest,
-        ]);
-        if (alt.chemins?.[0]) setResultat(alt.chemins[0]);
-      }
+      await recalculerAlternatives(traficSrc, traficDest);
     }
     setLoading(false);
   };
@@ -79,6 +95,8 @@ export default function TraficScreen({ navigation }) {
     else {
       setMsg(data.message || "Route restauree");
       await chargerTrafic();
+      setTraficRoute(null);
+      if (depart && destination) await recalculerAlternatives(null, null);
     }
   };
 
@@ -145,25 +163,63 @@ export default function TraficScreen({ navigation }) {
           onChange={setDestination}
           quartiers={quartiersList}
         />
+
+        {conseil ? (
+          <View style={styles.conseilBox}>
+            <Text style={styles.conseilText}>{conseil}</Text>
+          </View>
+        ) : null}
+
+        {alerte && (
+          <View style={styles.alerte}>
+            <Text style={styles.alerteText}>{alerte.message}</Text>
+          </View>
+        )}
+
         {resultat?.chemin && (
           <View style={styles.result}>
-            <Text style={styles.resultTitle}>Trajet recalcule</Text>
+            <Text style={styles.resultTitle}>
+              {alternatives.length > 0 ? "Trajet recommandé" : "Trajet recalcule"}
+            </Text>
             <CheminSteps chemin={resultat.chemin} maxVisible={6} compact />
             <Text style={styles.meta}>
-              {resultat.distance} km · {resultat.chemin.length - 1} etapes
+              {resultat.distance} km · ~{estimateDuree(resultat.distance)} min ·{" "}
+              {resultat.chemin.length - 1} etapes
             </Text>
             <PrimaryButton
-              label="Voir sur la carte"
+              label="Voir chemins alternatifs sur la carte"
               onPress={() =>
                 navigation.navigate("Carte", {
                   depart,
                   destination,
                   autoCalc: true,
+                  showAlternatives: true,
                 })
               }
               color={colors.violet}
               style={{ marginTop: 12 }}
             />
+          </View>
+        )}
+
+        {alternatives.length > 0 && (
+          <View style={styles.altBlock}>
+            <Text style={styles.altTitle}>
+              Chemins alternatifs ({alternatives.length})
+            </Text>
+            {alternatives.slice(0, 3).map((alt, i) => (
+              <Pressable
+                key={i}
+                style={styles.altItem}
+                onPress={() => setResultat(alt)}
+              >
+                <Text style={styles.altHeader}>
+                  Alt. {i + 1} · {alt.distance} km · ~{estimateDuree(alt.distance)} min
+                  {alt.evite_trafic ? " · Sans trafic" : " · Trafic"}
+                </Text>
+                <CheminSteps chemin={alt.chemin} maxVisible={3} compact />
+              </Pressable>
+            ))}
           </View>
         )}
       </View>
@@ -239,6 +295,24 @@ const styles = StyleSheet.create({
   btnText: { color: colors.blanc, fontWeight: "700" },
   error: { color: colors.orange, marginTop: 10, fontSize: 13 },
   success: { color: colors.vert, marginTop: 10, fontSize: 13, fontWeight: "600" },
+  conseilBox: {
+    marginTop: 12,
+    backgroundColor: "#E8F5E9",
+    padding: 12,
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.vert,
+  },
+  conseilText: { fontSize: 13, color: colors.texte },
+  alerte: {
+    marginTop: 12,
+    backgroundColor: "#FFEBEE",
+    padding: 12,
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.rouge,
+  },
+  alerteText: { fontSize: 13, color: "#C62828" },
   result: {
     marginTop: 12,
     backgroundColor: "#E3F2FD",
@@ -247,6 +321,15 @@ const styles = StyleSheet.create({
   },
   resultTitle: { fontWeight: "700", color: colors.bleu },
   meta: { marginTop: 4, fontSize: 13 },
+  altBlock: { marginTop: 12 },
+  altTitle: { fontWeight: "600", marginBottom: 8, fontSize: 14 },
+  altItem: {
+    backgroundColor: colors.grisClair,
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  altHeader: { fontWeight: "600", fontSize: 12, marginBottom: 6 },
   traficItem: {
     backgroundColor: "#FFEBEE",
     padding: 10,

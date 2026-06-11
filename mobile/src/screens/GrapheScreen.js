@@ -11,6 +11,7 @@ import {
 import MapView, { Polyline, Marker, PROVIDER_DEFAULT } from "react-native-maps";
 import Constants from "expo-constants";
 import { calculerChemin, getItineraireRoutier, getCheminsAlternatifs } from "../api";
+import { useTrip } from "../context/TripContext";
 import useQuartiers from "../hooks/useQuartiers";
 import QuartierPicker from "../components/QuartierPicker";
 import CheminSteps from "../components/CheminSteps";
@@ -28,8 +29,7 @@ const TANA_REGION = {
 export default function GrapheScreen() {
   const mapRef = useRef(null);
   const { quartiersList, quartiers, connexions } = useQuartiers();
-  const [depart, setDepart] = useState("");
-  const [destination, setDestination] = useState("");
+  const { depart, destination, setDepart, setDestination } = useTrip();
   const [chemin, setChemin] = useState([]);
   const [distance, setDistance] = useState(null);
   const [duree, setDuree] = useState(null);

@@ -8,14 +8,14 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { getPerformances } from "../api";
+import { useTrip } from "../context/TripContext";
 import useQuartiers from "../hooks/useQuartiers";
 import QuartierPicker from "../components/QuartierPicker";
 import { colors, spacing } from "../theme";
 
 export default function PerformancesScreen() {
   const { quartiersList } = useQuartiers();
-  const [depart, setDepart] = useState("");
-  const [destination, setDestination] = useState("");
+  const { depart, destination, setDepart, setDestination } = useTrip();
   const [resultat, setResultat] = useState(null);
   const [erreur, setErreur] = useState("");
   const [loading, setLoading] = useState(false);

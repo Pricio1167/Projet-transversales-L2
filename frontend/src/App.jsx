@@ -11,6 +11,7 @@ import Performances from "./pages/Performances";
 import Carte from "./pages/Carte";
 import Admin from "./pages/Admin";
 import { getToken } from "./api";
+import { TripProvider } from "./context/TripContext";
 
 const styles = {
   app: {
@@ -34,6 +35,7 @@ function PublicRoute({ children }) {
 function App() {
   return (
     <BrowserRouter>
+      <TripProvider>
       <div style={styles.app}>
         <Routes>
           {/* Routes publiques sans Navbar */}
@@ -89,6 +91,7 @@ function App() {
           } />
         </Routes>
       </div>
+      </TripProvider>
     </BrowserRouter>
   );
 }

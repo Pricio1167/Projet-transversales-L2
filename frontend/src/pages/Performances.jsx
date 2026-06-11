@@ -1,6 +1,7 @@
 // pages/Performances.jsx - VERSION CORRIGÉE
 import { useState, useEffect } from "react";
 import { getQuartiersList, getPerformances } from "../api";
+import { useTrip } from "../context/TripContext";
 
 // Palette IHM
 const colors = {
@@ -252,8 +253,7 @@ const styles = {
 
 function Performances() {
   const [nodes, setNodes] = useState([]);
-  const [depart, setDepart] = useState("");
-  const [destination, setDestination] = useState("");
+  const { depart, destination, setDepart, setDestination } = useTrip();
   const [resultat, setResultat] = useState(null);
   const [loading, setLoading] = useState(false);
   const [erreur, setErreur] = useState("");

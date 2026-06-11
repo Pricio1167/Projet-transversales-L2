@@ -202,6 +202,24 @@ export const getMe = async () => {
   }
 };
 
+export const fetchMe = async () => {
+  const data = await getMe();
+  if (data?.unauthorized) {
+    await clearSession();
+    return null;
+  }
+  if (data?.erreur) return null;
+  if (data) await setUser(data);
+  return data;
+};
+
+export const isAdmin = async () => {
+  const u = await getUser();
+  const role = (u?.role || "").toLowerCase();
+  const email = (u?.email || "").toLowerCase();
+  return role === "admin" || email === "admin@admin.com" || !!u?.is_admin;
+};
+
 export const register = async (nom, email, password) => {
   try {
     const res = await fetchWithTimeout(`${await resolveApiUrl()}/register`, {

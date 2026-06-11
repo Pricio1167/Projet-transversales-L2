@@ -10,13 +10,14 @@ import {
 } from "react-native";
 import { useRoute, useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import MapView, { Polyline, Marker, PROVIDER_DEFAULT, AnimatedRegion } from "react-native-maps";
+import MapView, { Polyline, Marker, PROVIDER_DEFAULT } from "react-native-maps";
 import Constants from "expo-constants";
 import {
   getItineraireRoutier,
   getTraficActif,
   getCheminsAlternatifs,
 } from "../api";
+import { useTrip, estimateDuree } from "../context/TripContext";
 import useQuartiers from "../hooks/useQuartiers";
 import QuartierPicker from "../components/QuartierPicker";
 import PrimaryButton from "../components/PrimaryButton";
@@ -30,21 +31,38 @@ const TANA_REGION = {
   longitudeDelta: 0.12,
 };
 
-const ROUTE_COLORS = [colors.orange, colors.vert, colors.violet];
+const ROUTE_COLORS = [colors.orange, colors.vert, colors.violet, "#0891B2"];
+const GRAPH_COLORS = ["#7C3AED", "#0891B2", "#D97706"];
+
+const cheminToCoords = (chemin, quartiers) =>
+  (chemin || [])
+    .filter((q) => quartiers[q])
+    .map((q) => [quartiers[q][0], quartiers[q][1]]);
 
 export default function CarteScreen() {
   const route = useRoute();
   const mapRef = useRef(null);
   const { quartiersList, quartiers } = useQuartiers();
-  const [depart, setDepart] = useState("");
-  const [destination, setDestination] = useState("");
+  const {
+    depart,
+    destination,
+    setDepart,
+    setDestination,
+    cheminsGraph,
+    setGraphResults,
+    conseil,
+    alerte,
+    traficRoute,
+  } = useTrip();
   const [routes, setRoutes] = useState([]);
-  const [conseil, setConseil] = useState("");
+  const [graphAlts, setGraphAlts] = useState([]);
   const [routeActif, setRouteActif] = useState(0);
+  const [graphActif, setGraphActif] = useState(0);
   const [traficRoutes, setTraficRoutes] = useState([]);
   const [erreur, setErreur] = useState("");
   const [loading, setLoading] = useState(false);
   const [pendingCalc, setPendingCalc] = useState(false);
+  const [showGraphAlts, setShowGraphAlts] = useState(true);
   const [simulating, setSimulating] = useState(false);
   const [simIndex, setSimIndex] = useState(0);
   const simIntervalRef = useRef(null);
@@ -62,9 +80,17 @@ export default function CarteScreen() {
       const p = route.params || {};
       if (p.depart) setDepart(p.depart);
       if (p.destination) setDestination(p.destination);
+      if (p.showAlternatives) setShowGraphAlts(true);
       if (p.autoCalc && p.depart && p.destination) setPendingCalc(true);
     }, [route.params?.depart, route.params?.destination, route.params?.autoCalc])
   );
+
+  useEffect(() => {
+    if (cheminsGraph?.length > 0) {
+      setGraphAlts(cheminsGraph);
+      setShowGraphAlts(true);
+    }
+  }, [cheminsGraph]);
 
   useEffect(() => {
     return () => {
@@ -91,31 +117,40 @@ export default function CarteScreen() {
     }
     setErreur("");
     setRoutes([]);
-    setConseil("");
+    setGraphAlts([]);
     setRouteActif(0);
+    setGraphActif(0);
     setLoading(true);
     setSimulating(false);
     if (simIntervalRef.current) clearInterval(simIntervalRef.current);
 
+    const routeEmbouteillee = traficRoute || null;
     const [dataOsrm, dataGraphe] = await Promise.all([
       getItineraireRoutier(depart, destination),
-      getCheminsAlternatifs(depart, destination).catch(() => ({})),
+      getCheminsAlternatifs(depart, destination, routeEmbouteillee),
     ]);
 
-    if (dataGraphe?.conseil || dataGraphe?.recommandation?.message) {
-      setConseil(dataGraphe.conseil || dataGraphe.recommandation.message);
+    if (dataGraphe?.chemins?.length > 0) {
+      setGraphAlts(dataGraphe.chemins);
+      setGraphResults(dataGraphe);
+      setShowGraphAlts(true);
     }
 
     if (dataOsrm.erreur) {
-      setErreur(dataOsrm.erreur);
+      if (dataGraphe?.chemins?.length > 0) {
+        const coords = cheminToCoords(dataGraphe.chemins[0].chemin, quartiers);
+        if (coords.length > 1) fitCoords(coords);
+      } else {
+        setErreur(dataOsrm.erreur);
+      }
     } else if (dataOsrm.routes?.length) {
       setRoutes(dataOsrm.routes);
       fitCoords(dataOsrm.routes[0].chemin);
-    } else {
-      setErreur("Aucun itinéraire routier trouvé");
+    } else if (!dataGraphe?.chemins?.length) {
+      setErreur("Aucun itinéraire trouvé");
     }
     setLoading(false);
-  }, [depart, destination, fitCoords]);
+  }, [depart, destination, fitCoords, quartiers, traficRoute, setGraphResults]);
 
   useEffect(() => {
     if (pendingCalc && depart && destination) {
@@ -132,13 +167,21 @@ export default function CarteScreen() {
     if (c?.length > 1) fitCoords(c);
   };
 
+  const selectGraphAlt = (idx) => {
+    setGraphActif(idx);
+    const coords = cheminToCoords(graphAlts[idx]?.chemin, quartiers);
+    if (coords.length > 1) fitCoords(coords);
+  };
+
   const toggleSimulation = () => {
     if (simulating) {
       setSimulating(false);
       if (simIntervalRef.current) clearInterval(simIntervalRef.current);
       return;
     }
-    const c = routeCourant?.chemin;
+    const c =
+      routes[routeActif]?.chemin ||
+      cheminToCoords(graphAlts[graphActif]?.chemin, quartiers);
     if (!c || c.length < 2) return;
     setSimIndex(0);
     setSimulating(true);
@@ -151,11 +194,40 @@ export default function CarteScreen() {
   };
 
   const routeCourant = routes[routeActif];
+  const graphCourant = graphAlts[graphActif];
+  const simCoords =
+    routeCourant?.chemin ||
+    cheminToCoords(graphCourant?.chemin, quartiers);
 
+  const dureeMin =
+    routeCourant?.duree ||
+    (graphCourant ? estimateDuree(graphCourant.distance) : 0);
   const now = new Date();
-  const dureeMin = routeCourant?.duree || 0;
   const etaDate = new Date(now.getTime() + dureeMin * 60000);
-  const etaStr = etaDate.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const etaStr = etaDate.toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const graphPolylines = showGraphAlts
+    ? graphAlts
+        .map((alt, idx) => {
+          const coords = cheminToCoords(alt.chemin, quartiers);
+          if (coords.length < 2) return null;
+          const isActive = idx === graphActif;
+          return {
+            coords,
+            color: isActive
+              ? GRAPH_COLORS[idx % GRAPH_COLORS.length]
+              : `${GRAPH_COLORS[idx % GRAPH_COLORS.length]}88`,
+            weight: isActive ? 5 : 3,
+            dashArray: isActive ? null : "6 8",
+            opacity: isActive ? 0.95 : 0.6,
+            key: `graph-${idx}`,
+          };
+        })
+        .filter(Boolean)
+    : [];
 
   return (
     <View style={styles.page}>
@@ -166,7 +238,7 @@ export default function CarteScreen() {
         >
           <Text style={styles.screenTitle}>Carte interactive</Text>
           <Text style={styles.hint}>
-            Itinéraires routiers OSRM + trafic simulé
+            Itinéraires OSRM + chemins alternatifs du graphe
           </Text>
           <QuartierPicker
             label="Départ"
@@ -187,15 +259,28 @@ export default function CarteScreen() {
             color={colors.vert}
           />
           {erreur ? <Text style={styles.error}>{erreur}</Text> : null}
-          {conseil ? <Text style={styles.conseil}>{conseil}</Text> : null}
-          {routeCourant && (
+
+          {conseil ? (
+            <View style={styles.conseilBox}>
+              <Text style={styles.conseilTitle}>Suggestion SIOTUM</Text>
+              <Text style={styles.conseil}>{conseil}</Text>
+            </View>
+          ) : null}
+
+          {alerte && (
+            <View style={styles.alerteBox}>
+              <Text style={styles.alerteText}>{alerte.message}</Text>
+            </View>
+          )}
+
+          {(routeCourant || graphCourant) && (
             <View>
               <Text style={styles.stats}>
-                {routeCourant.distance} km · ~{routeCourant.duree} min
+                {routeCourant
+                  ? `${routeCourant.distance} km · ~${routeCourant.duree} min`
+                  : `${graphCourant.distance} km · ~${estimateDuree(graphCourant.distance)} min`}
               </Text>
-              <Text style={styles.eta}>
-                Arrivée estimée : {etaStr}
-              </Text>
+              <Text style={styles.eta}>Arrivée estimée : {etaStr}</Text>
               <Pressable
                 style={[styles.simBtn, simulating && styles.simBtnActive]}
                 onPress={toggleSimulation}
@@ -206,8 +291,10 @@ export default function CarteScreen() {
               </Pressable>
             </View>
           )}
+
           {routes.length > 1 && (
             <View style={styles.tabs}>
+              <Text style={styles.tabLabel}>Itinéraires routiers (OSRM)</Text>
               {routes.map((r, i) => (
                 <Pressable
                   key={i}
@@ -223,12 +310,45 @@ export default function CarteScreen() {
                       routeActif === i && { color: colors.blanc },
                     ]}
                   >
-                    {i === 0 ? "Optimal" : `Alt. ${i}`} ({r.distance} km · {r.duree || "?"} min)
+                    {i === 0 ? "Optimal" : `Alt. ${i}`} ({r.distance} km ·{" "}
+                    {r.duree || "?"} min)
                   </Text>
                 </Pressable>
               ))}
             </View>
           )}
+
+          {graphAlts.length > 0 && (
+            <View style={styles.tabs}>
+              <Text style={styles.tabLabel}>
+                Chemins alternatifs graphe ({graphAlts.length})
+              </Text>
+              {graphAlts.map((alt, i) => (
+                <Pressable
+                  key={i}
+                  style={[
+                    styles.tab,
+                    graphActif === i && {
+                      backgroundColor: GRAPH_COLORS[i % GRAPH_COLORS.length],
+                    },
+                  ]}
+                  onPress={() => selectGraphAlt(i)}
+                >
+                  <Text
+                    style={[
+                      styles.tabText,
+                      graphActif === i && { color: colors.blanc },
+                    ]}
+                  >
+                    {i === 0 ? "Recommandé" : `Alt. ${i}`} · {alt.distance} km ·
+                    ~{estimateDuree(alt.distance)} min
+                    {alt.evite_trafic ? " · Sans trafic" : " · Trafic"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
           {traficRoutes.length > 0 && (
             <View style={styles.traficBanner}>
               <Text style={styles.traficTitle}>
@@ -264,12 +384,12 @@ export default function CarteScreen() {
                   },
                 ]
               : []),
-            ...(simulating && routeCourant?.chemin?.[simIndex]
+            ...(simulating && simCoords?.[simIndex]
               ? [
                   {
-                    latitude: routeCourant.chemin[simIndex][0],
-                    longitude: routeCourant.chemin[simIndex][1],
-                    title: `Simulation`,
+                    latitude: simCoords[simIndex][0],
+                    longitude: simCoords[simIndex][1],
+                    title: "Simulation",
                     color: "#D97706",
                   },
                 ]
@@ -295,13 +415,23 @@ export default function CarteScreen() {
                   },
                 ]
               : []),
+            ...graphPolylines.map((g) => ({
+              coords: g.coords,
+              color: g.color,
+              weight: g.weight,
+              dashArray: g.dashArray,
+              opacity: g.opacity,
+            })),
             ...traficRoutes
               .map((t) => {
                 const a = quartiers[t.src];
                 const b = quartiers[t.dest];
                 if (!a || !b) return null;
                 return {
-                  coords: [[a[0], a[1]], [b[0], b[1]]],
+                  coords: [
+                    [a[0], a[1]],
+                    [b[0], b[1]],
+                  ],
                   color: colors.rougeTrafic,
                   weight: 5,
                   dashArray: "8 6",
@@ -322,7 +452,7 @@ export default function CarteScreen() {
             if (idx === routeActif || !r.chemin?.length) return null;
             return (
               <Polyline
-                key={`alt-${idx}`}
+                key={`osrm-alt-${idx}`}
                 coordinates={r.chemin.map(([lat, lon]) => ({
                   latitude: lat,
                   longitude: lon,
@@ -343,6 +473,19 @@ export default function CarteScreen() {
               strokeWidth={6}
             />
           )}
+
+          {graphPolylines.map((g, idx) => (
+            <Polyline
+              key={g.key}
+              coordinates={g.coords.map(([lat, lon]) => ({
+                latitude: lat,
+                longitude: lon,
+              }))}
+              strokeColor={g.color}
+              strokeWidth={g.weight}
+              lineDashPattern={g.dashArray ? [6, 8] : undefined}
+            />
+          ))}
 
           {traficRoutes.map((t, idx) => {
             const a = quartiers[t.src];
@@ -383,11 +526,11 @@ export default function CarteScreen() {
             />
           )}
 
-          {simulating && routeCourant?.chemin?.[simIndex] && (
+          {simulating && simCoords?.[simIndex] && (
             <Marker
               coordinate={{
-                latitude: routeCourant.chemin[simIndex][0],
-                longitude: routeCourant.chemin[simIndex][1],
+                latitude: simCoords[simIndex][0],
+                longitude: simCoords[simIndex][1],
               }}
               title="Position actuelle"
               pinColor="orange"
@@ -402,7 +545,7 @@ export default function CarteScreen() {
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.grisClair },
   panel: {
-    maxHeight: Dimensions.get("window").height * 0.5,
+    maxHeight: Dimensions.get("window").height * 0.55,
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.sm,
     backgroundColor: colors.blanc,
@@ -417,12 +560,25 @@ const styles = StyleSheet.create({
   },
   hint: { fontSize: 12, color: colors.texteMuted, marginBottom: spacing.sm },
   error: { color: colors.orange, fontSize: 12, marginTop: 8 },
-  conseil: {
+  conseilBox: {
     marginTop: 8,
-    fontSize: 12,
-    color: colors.vert,
-    fontWeight: "600",
+    backgroundColor: "#E8F5E9",
+    padding: 10,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.vert,
   },
+  conseilTitle: { fontSize: 11, fontWeight: "700", color: colors.vert },
+  conseil: { marginTop: 4, fontSize: 12, color: colors.texte },
+  alerteBox: {
+    marginTop: 8,
+    backgroundColor: "#FFEBEE",
+    padding: 10,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.rouge,
+  },
+  alerteText: { fontSize: 12, color: "#C62828" },
   stats: {
     marginTop: 8,
     fontWeight: "700",
@@ -450,13 +606,20 @@ const styles = StyleSheet.create({
   },
   simBtnActive: { backgroundColor: "#D32F2F" },
   simBtnText: { color: colors.blanc, fontWeight: "700", fontSize: 12 },
-  tabs: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  tabs: { marginTop: 10 },
+  tabLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.texteMuted,
+    marginBottom: 6,
+  },
   tab: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.bordure,
+    marginBottom: 6,
   },
   tabText: { fontSize: 12, fontWeight: "600", color: colors.texte },
   traficBanner: {

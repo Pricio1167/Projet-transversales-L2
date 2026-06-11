@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { useAuth } from "../context/AuthContext";
 import {
   View,
   Text,
@@ -19,6 +20,7 @@ import {
   adminOverview,
   adminBlockUser,
   adminSetUserRole,
+  adminPurgeUser,
   adminTraficDelete,
   adminReloadGraph,
   adminTrajets,
@@ -26,13 +28,16 @@ import {
   getQuartiers,
   getTraficActif,
   simulerTraficAvance,
+  fetchMe,
 } from "../api";
 import QuartierPicker from "../components/QuartierPicker";
 import { colors, spacing } from "../theme";
 import { Share } from "react-native";
 
-export default function AdminScreen() {
+export default function AdminScreen({ navigation }) {
+  const { user } = useAuth();
   const [overview, setOverview] = useState(null);
+  const [accessDenied, setAccessDenied] = useState(false);
   const [users, setUsers] = useState([]);
   const [trajets, setTrajets] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -59,7 +64,8 @@ export default function AdminScreen() {
     ]);
     const errors = [o?.erreur, u?.erreur, t?.erreur, a?.erreur, tr?.erreur].filter(Boolean);
     if (errors.length) setMsg(errors.join(" — "));
-    setOverview(o?.stats ? o : null);
+    if (o?.erreur?.includes("admin")) setAccessDenied(true);
+    setOverview(o?.erreur ? null : o);
     setUsers(u?.users || []);
     setTrajets(t?.trajets || []);
     setEvents(a?.events || []);
@@ -73,8 +79,20 @@ export default function AdminScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [])
+      (async () => {
+        const me = await fetchMe();
+        const role = (me?.role || user?.role || "").toLowerCase();
+        const email = (me?.email || user?.email || "").toLowerCase();
+        const allowed =
+          role === "admin" || email === "admin@admin.com" || !!me?.is_admin;
+        if (!allowed) {
+          setAccessDenied(true);
+          return;
+        }
+        setAccessDenied(false);
+        await load();
+      })();
+    }, [user?.id])
   );
 
   const onRefresh = async () => {
@@ -159,6 +177,18 @@ export default function AdminScreen() {
       setMsg("Impossible de partager le CSV");
     }
   };
+
+  if (accessDenied) {
+    return (
+      <View style={[styles.page, styles.loadingContainer, { padding: spacing.md }]}>
+        <Text style={styles.title}>Accès refusé</Text>
+        <Text style={styles.sub}>Cette section est réservée aux administrateurs.</Text>
+        <Pressable style={styles.btn} onPress={() => navigation.navigate("Home")}>
+          <Text style={styles.btnText}>Retour à l'accueil</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   if (loading) {
     return (
@@ -304,42 +334,59 @@ export default function AdminScreen() {
         {users.length === 0 ? (
           <Text style={styles.empty}>Aucun utilisateur.</Text>
         ) : (
-          users.slice(0, 20).map((u) => (
-            <View key={u.id} style={styles.item}>
-              <Text style={styles.itemTitle}>
-                {u.nom} {u.is_admin ? "(admin)" : ""}
-              </Text>
-              <Text style={styles.itemMeta}>
-                {u.email} · Statut: {u.blocked ? "Bloqué" : "Actif"} · Role: {u.is_admin ? "admin" : "user"}
-              </Text>
-              {!u.is_admin ? (
-                <View style={styles.userActions}>
-                  <Pressable
-                    style={styles.smallDanger}
-                    onPress={() => toggleBlock(u.id, !u.blocked)}
-                  >
-                    <Text style={styles.smallDangerText}>
-                      {u.blocked ? "Débloquer" : "Bloquer"}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={styles.smallDanger}
-                    onPress={() => purgeUser(u.id)}
-                  >
-                    <Text style={styles.smallDangerText}>Purger données</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.smallBtn, u.role === "admin" ? styles.smallBtnOn : null]}
-                    onPress={() => changeUserRole(u.id, u.role === "admin" ? "user" : "admin")}
-                  >
-                    <Text style={[styles.smallBtnText, u.role === "admin" ? styles.smallBtnTextOn : null]}>Passer {u.role === "admin" ? "user" : "admin"}</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <Text style={styles.itemMeta}>Compte admin protégé</Text>
-              )}
-            </View>
-          ))
+          users.slice(0, 20).map((u) => {
+            const isPrimaryAdmin = (u.email || "").toLowerCase() === "admin@admin.com";
+            const isSelf = user?.id === u.id;
+            return (
+              <View key={u.id} style={styles.item}>
+                <Text style={styles.itemTitle}>
+                  {u.nom} {u.is_admin ? "(admin)" : ""}
+                </Text>
+                <Text style={styles.itemMeta}>
+                  {u.email} · Statut: {u.blocked ? "Bloqué" : "Actif"} · Role: {u.is_admin ? "admin" : "user"}
+                </Text>
+                {!u.is_admin ? (
+                  <View style={styles.userActions}>
+                    <Pressable
+                      style={styles.smallDanger}
+                      onPress={() => toggleBlock(u.id, !u.blocked)}
+                    >
+                      <Text style={styles.smallDangerText}>
+                        {u.blocked ? "Débloquer" : "Bloquer"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.smallDanger}
+                      onPress={() => purgeUser(u.id)}
+                    >
+                      <Text style={styles.smallDangerText}>Purger données</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.smallBtn, u.role === "admin" ? styles.smallBtnOn : null]}
+                      onPress={() => changeUserRole(u.id, u.role === "admin" ? "user" : "admin")}
+                      disabled={isSelf}
+                    >
+                      <Text style={[styles.smallBtnText, u.role === "admin" ? styles.smallBtnTextOn : null]}>
+                        Passer {u.role === "admin" ? "user" : "admin"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : isPrimaryAdmin ? (
+                  <Text style={styles.itemMeta}>Compte admin principal protégé</Text>
+                ) : (
+                  <View style={styles.userActions}>
+                    <Pressable
+                      style={styles.smallBtn}
+                      onPress={() => changeUserRole(u.id, "user")}
+                      disabled={isSelf}
+                    >
+                      <Text style={styles.smallBtnText}>Rétrograder en user</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            );
+          })
         )}
       </View>
 

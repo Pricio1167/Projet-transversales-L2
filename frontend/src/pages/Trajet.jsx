@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { getQuartiersList, calculerChemin, getCheminsAlternatifs } from "../api";
+import { useTrip, estimateDuree } from "../context/TripContext";
 import SearchSelect from "../components/SearchSelect";
 
 // Palette IHM
@@ -320,13 +321,18 @@ const styles = {
 
 function Trajet() {
   const navigate = useNavigate();
+  const {
+    depart,
+    destination,
+    setDepart,
+    setDestination,
+    setGraphResults,
+    conseil,
+    alerte,
+  } = useTrip();
   const [nodes, setNodes] = useState([]);
-  const [depart, setDepart] = useState("");
-  const [destination, setDestination] = useState("");
   const [resultat, setResultat] = useState(null);
   const [cheminsAlternatifs, setCheminsAlternatifs] = useState([]);
-  const [alerte, setAlerte] = useState(null);
-  const [conseil, setConseil] = useState("");
   const [erreur, setErreur] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -348,8 +354,7 @@ function Trajet() {
     setErreur("");
     setResultat(null);
     setCheminsAlternatifs([]);
-    setAlerte(null);
-    setConseil("");
+    setGraphResults(null);
     setLoading(true);
 
     try {
@@ -362,16 +367,14 @@ function Trajet() {
           setErreur(simpleData.erreur);
         } else if (simpleData.chemin && simpleData.chemin.length > 0) {
           setResultat(simpleData);
+          setGraphResults({ chemins: [simpleData] });
         } else {
           setErreur("Aucun chemin trouvé entre ces deux quartiers");
         }
       } else if (data.chemins && data.chemins.length > 0) {
         setResultat(data.chemins[0]);
         setCheminsAlternatifs(data.chemins.slice(1));
-        if (data.alerte) setAlerte(data.alerte);
-        if (data.conseil || data.recommandation?.message) {
-          setConseil(data.conseil || data.recommandation.message);
-        }
+        setGraphResults(data);
       } else {
         setErreur("Aucun chemin trouvé entre ces deux quartiers");
       }
@@ -553,6 +556,7 @@ function Trajet() {
                     <i className="fas fa-road"></i> Distance totale
                   </div>
                   <div style={styles.metricValue}>{resultat.distance} km</div>
+                  <div style={{ fontSize: 11, color: colors.texteMuted, marginTop: 4 }}>~{estimateDuree(resultat.distance)} min</div>
                 </div>
                 <div style={styles.metric}>
                   <div style={styles.metricLabel}>
@@ -582,7 +586,7 @@ function Trajet() {
                         <span style={styles.alternativeBadge(alt.evite_trafic ? colors.vert : colors.orange)}>
                           {alt.evite_trafic ? "Sans trafic" : "Passe par trafic"} {idx + 1}
                         </span>
-                        <span style={styles.alternativeDistance}>{alt.distance} km</span>
+                        <span style={styles.alternativeDistance}>{alt.distance} km · ~{estimateDuree(alt.distance)} min</span>
                       </div>
                       <div style={styles.alternativeDiff}>
                         {alt.distance !== resultat.distance 
