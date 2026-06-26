@@ -175,7 +175,7 @@ export default function Admin() {
   };
 
   const purgeUser = async (userId) => {
-    if (!window.confirm("Supprimer toutes les données de cet utilisateur (trajets, trafic, etc.) ?")) return;
+    setMsg("Traitement en cours : purge des données utilisateur...");
     const res = await adminPurgeUser(userId);
     if (res?.message) setMsg(res.message);
     if (res?.erreur) setMsg(res.erreur);
@@ -183,8 +183,7 @@ export default function Admin() {
   };
 
   const toggleBlock = async (userId, nextBlocked) => {
-    const action = nextBlocked ? "bloquer" : "débloquer";
-    if (!window.confirm(`Voulez-vous ${action} cet utilisateur ?`)) return;
+    setMsg(nextBlocked ? "Traitement en cours : blocage utilisateur..." : "Traitement en cours : déblocage utilisateur...");
     const res = await adminBlockUser(userId, nextBlocked);
     if (res?.message) setMsg(res.message);
     if (res?.erreur) setMsg(res.erreur);
@@ -199,7 +198,7 @@ export default function Admin() {
   };
 
   const deleteTrafic = async (id) => {
-    if (!window.confirm("Supprimer cet embouteillage et restaurer la route ?")) return;
+    setMsg("Traitement en cours : suppression du trafic...");
     const res = await adminTraficDelete(id);
     if (res?.message) setMsg(res.message);
     if (res?.erreur) setMsg(res.erreur);
@@ -207,7 +206,7 @@ export default function Admin() {
   };
 
   const cancelTrajet = async (id) => {
-    if (!window.confirm("Annuler ce trajet ?")) return;
+    setMsg("Traitement en cours : annulation du trajet...");
     const res = await adminDeleteTrajet(id);
     if (res?.message) setMsg(res.message);
     if (res?.erreur) setMsg(res.erreur);
@@ -222,7 +221,7 @@ export default function Admin() {
     const res = await simulerTraficAvance(traficSrc, traficDest, traficPoids);
     if (res?.message) setMsg(`Embouteillage simulé : ${res.message}`);
     if (res?.erreur) setMsg(res.erreur);
-    if (res?.alerte) setMsg(`⚠️ ${res.alerte.message}`);
+    if (res?.alerte) setMsg(`Alerte trafic : ${res.alerte.message}`);
     await load();
   };
 

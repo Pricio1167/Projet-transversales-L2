@@ -307,8 +307,8 @@ function Home() {
           >
             <i className="fas fa-car-side" style={{ color: colors.orange, fontSize: 20 }}></i>
             <div>
-              <div style={styles.quickTitle}>Simuler le trafic</div>
-              <div style={styles.quickSubtitle}>Tester l'impact des embouteillages</div>
+              <div style={styles.quickTitle}>Gestion du trafic</div>
+              <div style={styles.quickSubtitle}>Analyser l'impact des perturbations</div>
             </div>
           </button>
 
@@ -323,16 +323,6 @@ function Home() {
             </div>
           </button>
 
-          <button
-            style={styles.quickBtn(colors.texte, colors.bordure, colors.blanc)}
-            onClick={() => navigate("/graphe")}
-          >
-            <i className="fas fa-project-diagram" style={{ color: colors.texte, fontSize: 20 }}></i>
-            <div>
-              <div style={styles.quickTitle}>Visualisation du graphe</div>
-              <div style={styles.quickSubtitle}>Explorer la structure du réseau</div>
-            </div>
-          </button>
         </div>
 
         {/* Historique des trajets */}

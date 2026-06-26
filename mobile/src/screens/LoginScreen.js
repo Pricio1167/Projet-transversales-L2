@@ -91,7 +91,7 @@ export default function LoginScreen({ navigation }) {
           <Text style={styles.link}>Créer un compte</Text>
         </Pressable>
 
-        <Text style={styles.hint}>Demo : admin@admin.com / admin123</Text>
+        <Text style={styles.hint}>Compte de démonstration : admin@admin.com / admin123</Text>
       </View>
     </KeyboardAvoidingView>
   );

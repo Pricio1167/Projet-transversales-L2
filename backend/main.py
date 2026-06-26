@@ -688,8 +688,50 @@ def admin_export_trafic():
 @app.route('/nodes', methods=['GET'])
 def get_nodes():
     """Meme liste que les quartiers affichables sur la carte (coords Antananarivo)."""
+    # Si la base a plus de connexions que le graphe en memoire, on resynchronise.
+    _refresh_graph_if_globally_stale()
     quartiers = get_quartiers_with_coords()
     return jsonify({"nodes": sorted(quartiers.keys())})
+
+
+def _db_neighbors_count(node):
+    """Nombre de liaisons d'un quartier en base (source ou destination)."""
+    try:
+        row = execute_one(
+            "SELECT COUNT(*) AS n FROM connexions WHERE src = %s OR dest = %s",
+            (node, node),
+        )
+        return int(row.get("n", 0)) if row else 0
+    except Exception:
+        return 0
+
+
+def _refresh_graph_if_stale(node):
+    """
+    Recharge le graphe en memoire si la base contient des connexions pour `node`
+    mais le graphe courant n'en a pas (backend non redemarre / graphe stale).
+    """
+    global graph
+    db_count = _db_neighbors_count(node)
+    if db_count > 0 and (node not in graph.nodes or not graph.get_neighbors(node)):
+        graph = create_antananarivo_graph()
+        return True
+    return False
+
+
+def _refresh_graph_if_globally_stale():
+    """Recharge le graphe si le volume de connexions en base diffère du graphe mémoire."""
+    global graph
+    try:
+        row = execute_one("SELECT COUNT(*) AS n FROM connexions")
+        db_count = int(row.get("n", 0)) if row else 0
+    except Exception:
+        return False
+    mem_count = len(graph.get_all_edges()) if graph else 0
+    if db_count > 0 and db_count != mem_count:
+        graph = create_antananarivo_graph()
+        return True
+    return False
 
 
 def _valider_quartiers_trajet(depart, destination):
@@ -703,14 +745,24 @@ def _valider_quartiers_trajet(depart, destination):
         return None, (jsonify({
             "erreur": f"Quartier « {destination} » introuvable. Choisissez un quartier de la liste Antananarivo."
         }), 404)
+
+    # Auto-reload du graphe si la base a ete mise a jour apres demarrage backend.
+    _refresh_graph_if_stale(depart)
+    _refresh_graph_if_stale(destination)
+
     if depart not in graph.nodes:
         return None, (jsonify({"erreur": f"« {depart} » n'est pas dans le reseau routier."}), 404)
     if destination not in graph.nodes:
         return None, (jsonify({"erreur": f"« {destination} » n'est pas dans le reseau routier."}), 404)
     if not graph.get_neighbors(depart):
+        # Derniere tentative de refresh au cas ou les connexions viennent d'etre regenerees.
+        _refresh_graph_if_stale(depart)
+    if not graph.get_neighbors(depart):
         return None, (jsonify({
             "erreur": f"« {depart} » n'a aucune route connectee. Relancez regenerate_connexions_db.py."
         }), 404)
+    if not graph.get_neighbors(destination):
+        _refresh_graph_if_stale(destination)
     if not graph.get_neighbors(destination):
         return None, (jsonify({
             "erreur": f"« {destination} » n'a aucune route connectee. Relancez regenerate_connexions_db.py."
@@ -719,6 +771,7 @@ def _valider_quartiers_trajet(depart, destination):
 
 @app.route('/quartiers', methods=['GET'])
 def get_quartiers():
+    _refresh_graph_if_globally_stale()
     quartiers = get_quartiers_with_coords()
     try:
         connexions = execute_query("SELECT src, dest, distance FROM connexions", fetch=True)
@@ -1129,7 +1182,50 @@ def get_itineraire_routier():
     except requests.exceptions.RequestException as e:
         return jsonify({"erreur": f"Erreur de connexion à OSRM: {str(e)}"}), 500
 
-@app.route('/trafic/edges', methods=['GET'])
+
+@app.route('/itineraire/waypoints', methods=['POST'])
+def get_itineraire_waypoints():
+    """
+    Calcule la geometrie routiere reelle via OSRM pour une liste de quartiers (waypoints).
+    Utile pour tracer les chemins alternatifs en suivant les vraies rues.
+    Body: { "quartiers": ["Analakely", "Isoraka", "Andohalo"] }
+    """
+    data = get_json()
+    noms = data.get('quartiers') or []
+    if len(noms) < 2:
+        return jsonify({"erreur": "Au moins 2 quartiers requis"}), 400
+
+    quartiers_coords = get_quartiers_with_coords()
+    coords_list = []
+    for nom in noms:
+        c = quartiers_coords.get(nom)
+        if not c:
+            return jsonify({"erreur": f"Quartier introuvable : {nom}"}), 404
+        coords_list.append(c)
+
+    # Construire la chaine de waypoints OSRM (lon,lat)
+    waypoints_str = ";".join(f"{c[1]},{c[0]}" for c in coords_list)
+    osrm_url = (
+        f"http://router.project-osrm.org/route/v1/driving/{waypoints_str}"
+        "?overview=full&geometries=geojson"
+    )
+    try:
+        resp = requests.get(osrm_url, timeout=10)
+        d = resp.json()
+        if d.get('code') == 'Ok' and d.get('routes'):
+            route = d['routes'][0]
+            geom = [[c[1], c[0]] for c in route['geometry']['coordinates']]
+            return jsonify({
+                "success": True,
+                "chemin": geom,
+                "distance": round(route['distance'] / 1000, 2),
+                "duree": round(route['duration'] / 60, 1),
+            })
+        return jsonify({"erreur": "OSRM n'a pas trouve d'itineraire", "fallback": True}), 404
+    except requests.exceptions.RequestException:
+        return jsonify({"erreur": "OSRM inaccessible", "fallback": True}), 503
+
+
 # For local testing we allow public access; in production restore @jwt_required()
 def get_trafic_edges():
     """Retourne toutes les routes qui ont du trafic"""

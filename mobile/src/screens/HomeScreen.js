@@ -57,8 +57,7 @@ export default function HomeScreen({ navigation }) {
   const shortcuts = [
     { label: "Calculer un trajet", screen: "Trajet", color: colors.vert },
     { label: "Carte interactive", screen: "Carte", color: colors.bleu },
-    { label: "Graphe du reseau", screen: "Graphe", color: colors.texte },
-    { label: "Simuler le trafic", screen: "Trafic", color: colors.orange },
+    { label: "Gestion du trafic", screen: "Trafic", color: colors.orange },
     { label: "Performances", screen: "Performances", color: colors.violet },
   ];
 
@@ -85,7 +84,7 @@ export default function HomeScreen({ navigation }) {
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
           <Text style={styles.welcome}>
-            Bonjour, {user?.nom || "Utilisateur"}
+            Bienvenue, {user?.nom || "Utilisateur"}
           </Text>
           <Text style={styles.sub}>Tableau de bord SIOTUM</Text>
         </View>
@@ -96,7 +95,7 @@ export default function HomeScreen({ navigation }) {
           <Ionicons name="settings-outline" size={22} color={colors.bleu} />
         </Pressable>
         <Pressable style={styles.logout} onPress={signOut}>
-          <Text style={styles.logoutText}>Sortir</Text>
+          <Text style={styles.logoutText}>Déconnexion</Text>
         </Pressable>
       </View>
 
@@ -114,10 +113,10 @@ export default function HomeScreen({ navigation }) {
         />
         <Text style={styles.serverText}>
           {serverOk === null
-            ? "Verification..."
+            ? "Vérification..."
             : serverOk
-            ? `Serveur connecte · ${nodeCount} quartiers`
-            : "Serveur inaccessible — Parametres"}
+            ? `Serveur connecté · ${nodeCount} quartiers`
+            : "Serveur inaccessible — Paramètres"}
         </Text>
         {!serverOk && serverOk !== null && (
           <Pressable onPress={() => navigation.navigate("Settings")}>
@@ -145,7 +144,7 @@ export default function HomeScreen({ navigation }) {
         </View>
       </View>
 
-      <Text style={styles.sectionTitle}>Acces rapide</Text>
+      <Text style={styles.sectionTitle}>Accès rapide</Text>
       {shortcuts.map((s) => (
         <Pressable
           key={s.screen}
@@ -160,7 +159,7 @@ export default function HomeScreen({ navigation }) {
 
       <Text style={styles.sectionTitle}>Derniers trajets</Text>
       {historique.length === 0 ? (
-        <Text style={styles.empty}>Aucun trajet pour le moment.</Text>
+        <Text style={styles.empty}>Aucun trajet enregistré.</Text>
       ) : (
         historique.slice(0, 8).map((t) => (
           <Pressable
@@ -172,7 +171,7 @@ export default function HomeScreen({ navigation }) {
               {t.depart} → {t.destination}
             </Text>
             <Text style={styles.trajetMeta}>
-              {t.distance} km · {t.etapes} etapes · Toucher pour la carte
+              {t.distance} km · {t.etapes} étapes · Appuyer pour afficher la carte
             </Text>
           </Pressable>
         ))

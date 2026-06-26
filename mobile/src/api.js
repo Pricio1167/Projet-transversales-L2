@@ -319,6 +319,30 @@ export const getCheminsAlternatifs = async (
   }
 };
 
+/**
+ * Calcule la geometrie routiere reelle (OSRM) pour une liste de quartiers (waypoints).
+ * Retourne { chemin: [[lat,lon],...], distance, duree } ou null si OSRM indisponible.
+ */
+export const getItineraireWaypoints = async (quartiersList) => {
+  if (!quartiersList || quartiersList.length < 2) return null;
+  try {
+    const res = await fetchWithTimeout(
+      `${await resolveApiUrl()}/itineraire/waypoints`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quartiers: quartiersList }),
+      },
+      8000
+    );
+    const data = await parseResponse(res);
+    if (data.erreur || data.fallback) return null;
+    return data;
+  } catch {
+    return null;
+  }
+};
+
 export const getHistorique = async () => {
   try {
     const res = await fetchWithTimeout(`${await resolveApiUrl()}/historique`, {

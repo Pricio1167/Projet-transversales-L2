@@ -16,7 +16,6 @@ import TrajetScreen from "../screens/TrajetScreen";
 import CarteScreen from "../screens/CarteScreen";
 import TraficScreen from "../screens/TraficScreen";
 import PerformancesScreen from "../screens/PerformancesScreen";
-import GrapheScreen from "../screens/GrapheScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import AdminScreen from "../screens/AdminScreen";
 
@@ -80,7 +79,6 @@ function MainTabs() {
             Home: "home",
             Trajet: "navigate",
             Carte: "map",
-            Graphe: "git-network",
             Trafic: "car",
             Performances: "stats-chart",
             Admin: "shield-checkmark",
@@ -105,11 +103,6 @@ function MainTabs() {
         name="Carte"
         component={CarteScreen}
         options={{ title: "Carte", headerShown: false }}
-      />
-      <Tab.Screen
-        name="Graphe"
-        component={GrapheScreen}
-        options={{ title: "Graphe", headerShown: false }}
       />
       <Tab.Screen name="Trafic" component={TraficScreen} options={{ title: "Trafic" }} />
       <Tab.Screen

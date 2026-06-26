@@ -158,7 +158,7 @@ export default function AdminScreen({ navigation }) {
     const res = await simulerTraficAvance(traficSrc, traficDest, traficPoids);
     if (res?.message) setMsg(`Embouteillage simulé : ${res.message}`);
     else if (res?.erreur) setMsg(res.erreur);
-    if (res?.alerte) setMsg(`⚠️ ${res.alerte.message}`);
+    if (res?.alerte) setMsg(`Alerte trafic : ${res.alerte.message}`);
     await load();
   };
 

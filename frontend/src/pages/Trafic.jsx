@@ -280,6 +280,7 @@ function Trafic() {
   const [traficActif, setTraficActif] = useState([]);
   const [resultat, setResultat] = useState(null);
   const [alternatives, setAlternatives] = useState([]);
+  const [trajetImpacte, setTrajetImpacte] = useState(false); // chemin principal passe par zone trafic
   const [loadingTrafic, setLoadingTrafic] = useState(false);
   const [loadingAlternatives, setLoadingAlternatives] = useState(false);
 
@@ -301,7 +302,8 @@ function Trafic() {
   }, []);
 
   const appliquerTrafic = async () => {
-    if (!traficSrc || !traficDest || !traficPoids) {
+    const poids = parseFloat(traficPoids);
+    if (!traficSrc || !traficDest || Number.isNaN(poids) || poids <= 0) {
       setTraficError("Veuillez renseigner tous les champs");
       return;
     }
@@ -309,9 +311,10 @@ function Trafic() {
     setTraficError("");
     setTraficMsg("");
     setAlternatives([]);
+    setTrajetImpacte(false);
     setLoadingTrafic(true);
 
-    const data = await simulerTrafic(traficSrc, traficDest, parseFloat(traficPoids));
+    const data = await simulerTrafic(traficSrc, traficDest, poids);
     
     if (data.erreur) {
       setTraficError(data.erreur);
@@ -319,22 +322,35 @@ function Trafic() {
       return;
     }
     
-    setTraficMsg(data.message || `Trafic appliqué sur ${traficSrc} → ${traficDest}`);
+    const appliedSrc = data.src || traficSrc;
+    const appliedDest = data.dest || traficDest;
+    setTraficMsg(data.message || `Trafic appliqué sur ${appliedSrc} → ${appliedDest}`);
     
     // Rafraîchir la liste des trafics actifs
     await chargerTraficActif();
     
-    // Si un trajet est défini, chercher des alternatives
+    // Si un trajet est défini, chercher des alternatives et détecter si chemin principal impacté
     if (depart && destination) {
       setLoadingAlternatives(true);
-      const altData = await getCheminsAlternatifs(depart, destination, [traficSrc, traficDest]);
+      const altData = await getCheminsAlternatifs(depart, destination, [appliedSrc, appliedDest]);
       if (altData.chemins && altData.chemins.length > 0) {
-        setResultat(altData.chemins[0]);
+        const meilleur = altData.chemins[0];
+        setResultat(meilleur);
         if (altData.chemins.length > 1) {
           setAlternatives(altData.chemins.slice(1));
         }
         setGraphResults(altData);
-        setTraficRoute([traficSrc, traficDest]);
+        setTraficRoute([appliedSrc, appliedDest]);
+
+        // Vérifier si le chemin optimal retourné contient la zone embouteillée
+        // ou si l'alerte backend signale un impact
+        const cheminImpacte =
+          altData.alerte?.route != null ||
+          meilleur.contient_trafic === true ||
+          (meilleur.routes_trafic && meilleur.routes_trafic.length > 0);
+        setTrajetImpacte(cheminImpacte);
+      } else if (altData.erreur) {
+        setTraficError(altData.erreur);
       }
       setLoadingAlternatives(false);
     }
@@ -350,6 +366,7 @@ function Trafic() {
     const data = await resetTrafic(traficSrc, traficDest);
     if (data.message) {
       setTraficMsg(data.message);
+      setTrajetImpacte(false);
       await chargerTraficActif();
       setTraficRoute(null);
       if (depart && destination) {
@@ -366,8 +383,9 @@ function Trafic() {
   };
 
   const voirSurCarte = () => {
+    const preferAlt = alternatives.length > 0 || trajetImpacte;
     if (depart && destination) {
-      navigate(`/carte?depart=${encodeURIComponent(depart)}&destination=${encodeURIComponent(destination)}&auto=1&alts=1`);
+      navigate(`/carte?depart=${encodeURIComponent(depart)}&destination=${encodeURIComponent(destination)}&auto=1&alts=1${preferAlt ? "&pref=alt" : ""}`);
     } else {
       navigate("/carte");
     }
@@ -379,7 +397,7 @@ function Trafic() {
         <i className="fas fa-car-side"></i> Simulation de trafic
       </h2>
       <p style={styles.subtitle}>
-        Simule un embouteillage et visualise son impact sur ton trajet
+        Simulez une perturbation et analysez son impact sur un itinéraire.
       </p>
 
       <div style={styles.grid}>
@@ -390,7 +408,7 @@ function Trafic() {
             Appliquer un embouteillage
           </div>
           <div style={styles.cardSubtitle}>
-            Simule un embouteillage sur une <strong>rue directe</strong> entre deux quartiers voisins
+            Appliquez une perturbation sur une <strong>liaison directe</strong> entre deux quartiers voisins
             (ex. 67 Hectares ↔ Isotry). Pas un trajet multi-etapes.
           </div>
 
@@ -503,6 +521,46 @@ function Trafic() {
           {alerte && (
             <div style={{ ...styles.alertDanger, marginTop: 12 }}>
               <i className="fas fa-car-side"></i> {alerte.message}
+            </div>
+          )}
+
+          {/* Alerte explicite : le trajet principal passe par l'embouteillage */}
+          {trajetImpacte && alternatives.length > 0 && (
+            <div style={{
+              marginTop: 16,
+              backgroundColor: "#FFEBEE",
+              borderLeft: `5px solid ${colors.rougeTrafic}`,
+              borderRadius: 12,
+              padding: "14px 16px",
+              fontSize: 13,
+              color: "#B71C1C",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, marginBottom: 6 }}>
+                <i className="fas fa-triangle-exclamation"></i>
+                Le trajet {depart} → {destination} traverse la zone perturbée {traficSrc} → {traficDest}.
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                {alternatives.length} itinéraire(s) alternatif(s) disponible(s) pour éviter cet embouteillage :
+              </div>
+              {alternatives.slice(0, 2).map((alt, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, fontSize: 12 }}>
+                  <span style={{ background: i === 0 ? colors.vert : colors.violet, color: "#fff", borderRadius: 10, padding: "2px 8px", fontWeight: 600 }}>
+                    Alt. {i + 1}
+                  </span>
+                  {alt.chemin?.slice(0, 3).join(" → ")}… — <strong>{alt.distance} km</strong>
+                  {alt.evite_trafic && <span style={{ color: colors.vert, fontWeight: 600 }}> · Sans trafic ✓</span>}
+                </div>
+              ))}
+              <button style={{ ...styles.button(colors.vert), marginTop: 10 }} onClick={() => { setResultat(alternatives[0]); voirSurCarte(); }}>
+                <i className="fas fa-map"></i> Voir l'itinéraire alternatif sur la carte
+              </button>
+            </div>
+          )}
+
+          {/* Message si le trajet n'est pas impacté */}
+          {traficMsg && !trajetImpacte && depart && destination && !loadingAlternatives && resultat && (
+            <div style={{ ...styles.success, marginTop: 12 }}>
+              <i className="fas fa-check-circle"></i> Votre trajet {depart} → {destination} n'est pas affecté par cet embouteillage.
             </div>
           )}
 

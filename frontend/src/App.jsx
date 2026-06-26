@@ -5,7 +5,6 @@ import Home from "./pages/Home";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Trajet from "./pages/Trajet";
-import Graphe from "./pages/Graphe";
 import Trafic from "./pages/Trafic";
 import Performances from "./pages/Performances";
 import Carte from "./pages/Carte";
@@ -57,12 +56,6 @@ function App() {
             <PrivateRoute>
               <Navbar />
               <Trajet />
-            </PrivateRoute>
-          } />
-          <Route path="/graphe" element={
-            <PrivateRoute>
-              <Navbar />
-              <Graphe />
             </PrivateRoute>
           } />
           <Route path="/trafic" element={

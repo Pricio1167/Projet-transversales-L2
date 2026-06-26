@@ -1,12 +1,21 @@
-﻿import { useState, useEffect, useRef, useCallback } from "react";
+﻿import { Fragment, useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { MapContainer, TileLayer, Polyline, CircleMarker, Popup, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import L from "leaflet";
 import { RefreshCcw, Compass, ArrowRight, Play } from "lucide-react";
-import { getQuartiers, getItineraireRoutier, getCheminsAlternatifs } from "../api";
+import { getQuartiers, getItineraireRoutier, getCheminsAlternatifs, getItineraireWaypoints } from "../api";
 import { useTrip, estimateDuree } from "../context/TripContext";
 
 const SIMULATION_COLORS = ["#334155", "#7C3AED", "#0891B2", "#D97706"];
+const MAIN_ROUTE_COLOR = "#1d4ed8";
+const OSRM_ALT_COLORS = ["#dc2626", "#ef4444", "#b91c1c", "#f87171"];
+const ALT_ROUTE_COLORS = ["#dc2626", "#ef4444", "#b91c1c", "#f87171"];
+const TRAFFIC_COLOR = "#d97706";
+const CASING_COLOR = "#ffffff";
+
+const getOsrmRouteColor = (idx) =>
+  idx === 0 ? MAIN_ROUTE_COLOR : OSRM_ALT_COLORS[(idx - 1) % OSRM_ALT_COLORS.length];
 
 function FitBounds({ coords }) {
   const map = useMap();
@@ -141,6 +150,15 @@ function SearchSelect({ label, value, onChange, quartiersList }) {
 const cheminToCoords = (chemin, quartiersMap) =>
   (chemin || []).filter((q) => quartiersMap[q]).map((q) => quartiersMap[q]);
 
+const fetchGraphGeometries = async (alts) => {
+  const geoms = await Promise.all(
+    (alts || []).map((alt) =>
+      alt.chemin?.length >= 2 ? getItineraireWaypoints(alt.chemin) : Promise.resolve(null)
+    )
+  );
+  return geoms;
+};
+
 function Carte() {
   const [searchParams] = useSearchParams();
   const {
@@ -168,7 +186,9 @@ function Carte() {
   const [traficEdges, setTraficEdges] = useState([]);
   const [simulating, setSimulating] = useState(false);
   const [graphAlts, setGraphAlts] = useState([]);
+  const [graphAltsGeom, setGraphAltsGeom] = useState([]); // géométries OSRM pour chaque alt
   const [selectedGraphAlt, setSelectedGraphAlt] = useState(0);
+  const [routePopup, setRoutePopup] = useState(null);
   const autoCalcDone = useRef(false);
 
   useEffect(() => {
@@ -210,6 +230,7 @@ function Carte() {
     setSelectedGraphAlt(0);
     setSimulating(false);
     setGraphAlts([]);
+    setGraphAltsGeom([]);
     setLoading(true);
 
     const routeEmbouteillee = traficRoute || null;
@@ -218,10 +239,21 @@ function Carte() {
       getCheminsAlternatifs(depart, destination, routeEmbouteillee),
     ]);
 
+    let graphGeoms = [];
     if (graphRes.status === "fulfilled" && graphRes.value?.chemins?.length > 0) {
-      setGraphAlts(graphRes.value.chemins);
+      const alts = graphRes.value.chemins;
+      setGraphAlts(alts);
       setGraphResults(graphRes.value);
       setShowAlternatives(true);
+      // Si possible, sélectionner automatiquement une alternative sans trafic
+      const preferAlternative = searchParams.get("pref") === "alt";
+      const firstNoTraffic = alts.findIndex((a) => a.evite_trafic);
+      setSelectedGraphAlt(firstNoTraffic >= 0 ? firstNoTraffic : 0);
+      if (preferAlternative && firstNoTraffic >= 0) {
+        setSelectedGraphAlt(firstNoTraffic);
+      }
+      graphGeoms = await fetchGraphGeometries(alts);
+      setGraphAltsGeom(graphGeoms);
     }
 
     if (osrmRes.status === "fulfilled" && osrmRes.value && !osrmRes.value.erreur && osrmRes.value.routes?.length) {
@@ -238,18 +270,15 @@ function Carte() {
       });
     } else if (graphRes.status === "fulfilled" && graphRes.value?.chemins?.length > 0) {
       const best = graphRes.value.chemins[0];
+      const bestGeom = graphGeoms[0];
       setResultat({
-        distance: best.distance,
-        duree: estimateDuree(best.distance),
+        distance: bestGeom?.distance || best.distance,
+        duree: bestGeom?.duree || estimateDuree(best.distance),
         etapes: best.chemin.length,
         chemin: best.chemin,
       });
-      const coords = cheminToCoords(best.chemin, quartiers);
-      setCheminCoords(coords);
-      const segments = best.chemin.slice(0, -1)
-        .map((q, index) => { const next = best.chemin[index + 1]; return [quartiers[q], quartiers[next]]; })
-        .filter((segment) => segment[0] && segment[1]);
-      setPathSegments(segments);
+      setCheminCoords(bestGeom?.chemin || []);
+      setPathSegments([]);
     } else {
       const errMsg = (osrmRes.status === "fulfilled" && osrmRes.value?.erreur) || (graphRes.status === "fulfilled" && graphRes.value?.erreur) || "Erreur de calcul de trajet";
       setErreur(errMsg);
@@ -277,7 +306,9 @@ function Carte() {
     setPathSegments([]);
     setItineraireRoutes([]);
     setSimulating(false);
+    setRoutePopup(null);
     setGraphAlts([]);
+    setGraphAltsGeom([]);
   };
 
   const dureeMin = resultat ? Math.round((resultat.duree || (resultat.distance / 30) * 60)) : 0;
@@ -295,11 +326,20 @@ function Carte() {
     if (!simulating) setShowAlternatives(true);
   };
 
+  const openRoutePopup = (latlng, data) => {
+    if (!latlng) return;
+    setRoutePopup({
+      position: [latlng.lat, latlng.lng],
+      ...data,
+    });
+  };
+
   const selectGraphAlt = (idx) => {
     setSelectedGraphAlt(idx);
     const alt = graphAlts[idx];
     if (!alt) return;
-    const coords = cheminToCoords(alt.chemin, quartiers);
+    const osrmGeom = graphAltsGeom[idx];
+    const coords = osrmGeom?.chemin || [];
     if (coords.length > 1) setCheminCoords(coords);
   };
 
@@ -379,14 +419,14 @@ function Carte() {
                   <button key={`route-${idx}`} type="button"
                     style={{
                       ...styles.buttonSmall,
-                      borderColor: idx === selectedItineraire ? SIMULATION_COLORS[idx] : theme.border,
-                      background: idx === selectedItineraire ? `${SIMULATION_COLORS[idx]}15` : theme.surface,
-                      color: idx === selectedItineraire ? SIMULATION_COLORS[idx] : theme.text,
+                      borderColor: idx === selectedItineraire ? getOsrmRouteColor(idx) : theme.border,
+                      background: idx === selectedItineraire ? `${getOsrmRouteColor(idx)}15` : theme.surface,
+                      color: idx === selectedItineraire ? getOsrmRouteColor(idx) : theme.text,
                     }}
                     onClick={() => { setSelectedItineraire(idx); setCheminCoords(route.chemin); setSimulating(false); }}
                   >
                     <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <div style={styles.routeColor(SIMULATION_COLORS[idx])} />
+                      <div style={styles.routeColor(getOsrmRouteColor(idx))} />
                       {route.est_optimal ? "Recommandé" : `Alternative ${idx}`}
                     </span>
                     <span style={{ fontWeight: 700 }}>{route.distance} km · {route.duree || "?"} min</span>
@@ -404,12 +444,13 @@ function Carte() {
                   <button key={`galt-${idx}`} type="button"
                     style={{
                       ...styles.buttonSmall,
-                      borderColor: idx === selectedGraphAlt ? SIMULATION_COLORS[(idx + 1) % SIMULATION_COLORS.length] : theme.border,
-                      background: idx === selectedGraphAlt ? `${SIMULATION_COLORS[(idx + 1) % SIMULATION_COLORS.length]}15` : theme.surface,
+                      borderColor: idx === selectedGraphAlt ? ALT_ROUTE_COLORS[idx % ALT_ROUTE_COLORS.length] : theme.border,
+                      background: idx === selectedGraphAlt ? `${ALT_ROUTE_COLORS[idx % ALT_ROUTE_COLORS.length]}22` : theme.surface,
                     }}
                     onClick={() => selectGraphAlt(idx)}
                   >
-                    <span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={styles.routeColor(ALT_ROUTE_COLORS[idx % ALT_ROUTE_COLORS.length])} />
                       {idx === 0 ? "Recommandé" : `Alt. ${idx}`}
                       {alt.evite_trafic ? " · Sans trafic" : " · Trafic"}
                     </span>
@@ -491,11 +532,11 @@ function Carte() {
             <div style={styles.legend}>
               <div style={styles.legendItem}><div style={styles.dot(theme.success)} /> Départ</div>
               <div style={styles.legendItem}><div style={styles.dot(theme.danger)} /> Destination</div>
-              <div style={styles.legendItem}><div style={styles.routeColor(SIMULATION_COLORS[0])} /> Itinéraire principal</div>
-              <div style={styles.legendItem}><div style={styles.routeColor(SIMULATION_COLORS[1])} /> Alternative 1</div>
-              <div style={styles.legendItem}><div style={styles.routeColor(SIMULATION_COLORS[2])} /> Alternative 2</div>
-              <div style={styles.legendItem}><div style={styles.routeColor(SIMULATION_COLORS[3])} /> Alternative 3</div>
-              <div style={styles.legendItem}><div style={{ width: 16, height: 3, background: theme.danger, borderRadius: 2, borderStyle: 'dashed', borderWidth: 2 }} /> Trafic actif</div>
+              <div style={styles.legendItem}><div style={styles.routeColor(getOsrmRouteColor(0))} /> Itinéraire principal</div>
+              <div style={styles.legendItem}><div style={styles.routeColor(getOsrmRouteColor(1))} /> Alternative 1</div>
+              <div style={styles.legendItem}><div style={styles.routeColor(getOsrmRouteColor(2))} /> Alternative 2</div>
+              <div style={styles.legendItem}><div style={styles.routeColor(getOsrmRouteColor(3))} /> Alternative 3</div>
+              <div style={styles.legendItem}><div style={{ width: 16, height: 3, background: TRAFFIC_COLOR, borderRadius: 2, borderStyle: 'dashed', borderWidth: 2 }} /> Trafic actif</div>
             </div>
           </div>
         </div>
@@ -511,19 +552,39 @@ function Carte() {
             {itineraireRoutes && itineraireRoutes.length > 0 ? (
               itineraireRoutes.map((r, idx) => {
                 if (!showAlternatives && idx !== selectedItineraire) return null;
-                const color = SIMULATION_COLORS[idx] || theme.primary;
+                const isSelected = idx === selectedItineraire;
+                // Principal + alternatives OSRM avec contour blanc pour lisibilite maximale
+                const color = getOsrmRouteColor(idx);
+                const topWeight = isSelected ? 7 : 4;
                 return (
-                  <Polyline key={`itineraire-${idx}`} positions={r.chemin}
-                    color={color}
-                    weight={idx === selectedItineraire ? 6 : 3}
-                    opacity={idx === selectedItineraire ? 0.95 : 0.55}
-                    dashArray={idx === selectedItineraire ? null : [10, 8]}
-                  />
+                  <Fragment key={`osrm-route-${idx}`}>
+                    <Polyline key={`itineraire-casing-${idx}`} positions={r.chemin}
+                      color="#ffffff"
+                      weight={topWeight + 4}
+                      opacity={0.92}
+                    />
+                    <Polyline key={`itineraire-${idx}`} positions={r.chemin}
+                      color={color}
+                      weight={topWeight}
+                      opacity={isSelected ? 0.98 : 0.85}
+                      dashArray={isSelected ? null : "16,8"}
+                      eventHandlers={{
+                        click: (e) =>
+                          openRoutePopup(e.latlng, {
+                            title: idx === 0 ? "Itinéraire principal" : `Itinéraire alternatif ${idx}`,
+                            subtitle: `${r.distance} km · ${r.duree ?? "?"} min`,
+                          }),
+                      }}
+                    />
+                  </Fragment>
                 );
               })
             ) : (
               pathSegments.map((segment, i) => (
-                <Polyline key={`segment-${i}`} positions={segment} color={theme.success} weight={5} opacity={0.88} />
+                <Fragment key={`segment-${i}`}>
+                  <Polyline key={`segment-casing-${i}`} positions={segment} color={CASING_COLOR} weight={9} opacity={0.96} />
+                  <Polyline key={`segment-${i}`} positions={segment} color={MAIN_ROUTE_COLOR} weight={5} opacity={0.95} />
+                </Fragment>
               ))
             )}
 
@@ -531,24 +592,64 @@ function Carte() {
               const a = quartiers[t.src];
               const b = quartiers[t.dest];
               if (!a || !b) return null;
-              return <Polyline key={`trafic-${i}`} positions={[a, b]} color={theme.danger} weight={4} opacity={0.9} dashArray="6" />;
+              return (
+                <Fragment key={`trafic-${i}`}>
+                  <Polyline key={`trafic-casing-${i}`} positions={[a, b]} color={CASING_COLOR} weight={8} opacity={0.96} />
+                  <Polyline key={`trafic-${i}`} positions={[a, b]} color={TRAFFIC_COLOR} weight={4} opacity={0.95} dashArray="8,6"
+                    eventHandlers={{
+                      click: (e) =>
+                        openRoutePopup(e.latlng, {
+                          title: "Segment avec trafic actif",
+                          subtitle: `${t.src} -> ${t.dest}`,
+                        }),
+                    }}
+                  />
+                </Fragment>
+              );
             })}
 
             {showAlternatives && graphAlts.length > 0 && (
               graphAlts.map((r, idx) => {
-                const coords = cheminToCoords(r.chemin, quartiers);
+                const osrmGeom = graphAltsGeom[idx];
+                const coords = osrmGeom?.chemin || [];
                 if (coords.length < 2) return null;
-                const color = SIMULATION_COLORS[(idx + 1) % SIMULATION_COLORS.length];
                 const isActive = idx === selectedGraphAlt;
+                const color = ALT_ROUTE_COLORS[idx % ALT_ROUTE_COLORS.length];
+                const topWeight = isActive ? 6 : 4;
                 return (
-                  <Polyline key={`galt-${idx}`} positions={coords}
-                    color={color}
-                    weight={isActive ? 5 : 3}
-                    opacity={isActive ? 0.9 : 0.55}
-                    dashArray={isActive ? null : [8, 6]}
-                  />
+                  <Fragment key={`graph-alt-${idx}`}>
+                    <Polyline key={`galt-casing-${idx}`} positions={coords}
+                      color="#ffffff"
+                      weight={topWeight + 4}
+                      opacity={0.95}
+                    />
+                    <Polyline key={`galt-${idx}`} positions={coords}
+                      color={color}
+                      weight={topWeight}
+                      opacity={isActive ? 0.98 : 0.86}
+                      dashArray={isActive ? null : "10,7"}
+                      eventHandlers={{
+                        click: (e) =>
+                          openRoutePopup(e.latlng, {
+                            title: idx === 0 ? "Chemin recommandé (graphe)" : `Chemin alternatif ${idx} (graphe)`,
+                            subtitle: `${r.distance} km · ${r.etapes ?? r.chemin?.length - 1} étapes`,
+                          }),
+                      }}
+                    />
+                  </Fragment>
                 );
               })
+            )}
+
+            {routePopup && (
+              <Popup position={routePopup.position} onClose={() => setRoutePopup(null)}>
+                <div style={{ minWidth: 180 }}>
+                  <div style={{ fontWeight: 700, color: theme.text }}>{routePopup.title}</div>
+                  {routePopup.subtitle ? (
+                    <div style={{ marginTop: 4, color: theme.textMuted, fontSize: 12 }}>{routePopup.subtitle}</div>
+                  ) : null}
+                </div>
+              </Popup>
             )}
 
             {Object.entries(quartiers).map(([nom, coords]) => {

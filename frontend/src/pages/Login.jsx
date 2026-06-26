@@ -270,7 +270,7 @@ function Login() {
           <div style={styles.divider} />
 
           <div style={styles.footer}>
-            Pas encore de compte ?{" "}
+            Vous n'avez pas encore de compte ?{" "}
             <Link to="/register" style={styles.link}>
               Créer un compte
             </Link>
@@ -282,7 +282,7 @@ function Login() {
           </div>
           <div style={styles.demoHint}>
             <i className="fas fa-info-circle" style={{ marginRight: 6, fontSize: 11 }}></i>
-            Démo : admin@admin.com / admin123
+            Compte de démonstration : admin@admin.com / admin123
           </div>
         </div>
       </div>

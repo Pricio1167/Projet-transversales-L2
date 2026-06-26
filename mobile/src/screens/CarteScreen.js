@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import {
   getItineraireRoutier,
   getTraficActif,
   getCheminsAlternatifs,
+  getItineraireWaypoints,
 } from "../api";
 import { useTrip, estimateDuree } from "../context/TripContext";
 import useQuartiers from "../hooks/useQuartiers";
@@ -31,13 +32,27 @@ const TANA_REGION = {
   longitudeDelta: 0.12,
 };
 
-const ROUTE_COLORS = [colors.orange, colors.vert, colors.violet, "#0891B2"];
-const GRAPH_COLORS = ["#7C3AED", "#0891B2", "#D97706"];
+const MAIN_ROUTE_COLOR = "#1d4ed8";
+const ROUTE_ALT_COLORS = ["#dc2626", "#ef4444", "#b91c1c", "#f87171"];
+const GRAPH_COLORS = ["#dc2626", "#ef4444", "#b91c1c", "#f87171"];
+const TRAFFIC_COLOR = "#d97706";
+
+const getOsrmRouteColor = (idx) =>
+  idx === 0 ? MAIN_ROUTE_COLOR : ROUTE_ALT_COLORS[(idx - 1) % ROUTE_ALT_COLORS.length];
 
 const cheminToCoords = (chemin, quartiers) =>
   (chemin || [])
     .filter((q) => quartiers[q])
     .map((q) => [quartiers[q][0], quartiers[q][1]]);
+
+const fetchGraphGeometries = async (alts) => {
+  const geoms = await Promise.all(
+    (alts || []).map((alt) =>
+      alt.chemin?.length >= 2 ? getItineraireWaypoints(alt.chemin) : Promise.resolve(null)
+    )
+  );
+  return geoms;
+};
 
 export default function CarteScreen() {
   const route = useRoute();
@@ -56,6 +71,7 @@ export default function CarteScreen() {
   } = useTrip();
   const [routes, setRoutes] = useState([]);
   const [graphAlts, setGraphAlts] = useState([]);
+  const [graphAltsGeom, setGraphAltsGeom] = useState([]); // géométries OSRM pour chaque alt
   const [routeActif, setRouteActif] = useState(0);
   const [graphActif, setGraphActif] = useState(0);
   const [traficRoutes, setTraficRoutes] = useState([]);
@@ -65,6 +81,7 @@ export default function CarteScreen() {
   const [showGraphAlts, setShowGraphAlts] = useState(true);
   const [simulating, setSimulating] = useState(false);
   const [simIndex, setSimIndex] = useState(0);
+  const [routeNotice, setRouteNotice] = useState(null);
   const simIntervalRef = useRef(null);
   const isExpoGoAndroid =
     Platform.OS === "android" && Constants?.appOwnership === "expo";
@@ -82,7 +99,7 @@ export default function CarteScreen() {
       if (p.destination) setDestination(p.destination);
       if (p.showAlternatives) setShowGraphAlts(true);
       if (p.autoCalc && p.depart && p.destination) setPendingCalc(true);
-    }, [route.params?.depart, route.params?.destination, route.params?.autoCalc])
+    }, [route.params?.depart, route.params?.destination, route.params?.autoCalc, route.params?.showAlternatives])
   );
 
   useEffect(() => {
@@ -118,8 +135,10 @@ export default function CarteScreen() {
     setErreur("");
     setRoutes([]);
     setGraphAlts([]);
+    setGraphAltsGeom([]);
     setRouteActif(0);
     setGraphActif(0);
+    setRouteNotice(null);
     setLoading(true);
     setSimulating(false);
     if (simIntervalRef.current) clearInterval(simIntervalRef.current);
@@ -130,15 +149,24 @@ export default function CarteScreen() {
       getCheminsAlternatifs(depart, destination, routeEmbouteillee),
     ]);
 
+    let graphGeoms = [];
     if (dataGraphe?.chemins?.length > 0) {
-      setGraphAlts(dataGraphe.chemins);
+      const alts = dataGraphe.chemins;
+      setGraphAlts(alts);
       setGraphResults(dataGraphe);
       setShowGraphAlts(true);
+      const firstNoTraffic = alts.findIndex((a) => a.evite_trafic);
+      const preferAlt = !!route.params?.preferAlt;
+      if (preferAlt && firstNoTraffic >= 0) {
+        setGraphActif(firstNoTraffic);
+      }
+      graphGeoms = await fetchGraphGeometries(alts);
+      setGraphAltsGeom(graphGeoms);
     }
 
     if (dataOsrm.erreur) {
       if (dataGraphe?.chemins?.length > 0) {
-        const coords = cheminToCoords(dataGraphe.chemins[0].chemin, quartiers);
+        const coords = graphGeoms[0]?.chemin || [];
         if (coords.length > 1) fitCoords(coords);
       } else {
         setErreur(dataOsrm.erreur);
@@ -161,16 +189,31 @@ export default function CarteScreen() {
 
   const selectRoute = (idx) => {
     setRouteActif(idx);
+    const r = routes[idx];
+    if (r) {
+      setRouteNotice({
+        title: idx === 0 ? "Itinéraire principal" : `Itinéraire alternatif ${idx}`,
+        subtitle: `${r.distance} km · ${r.duree || "?"} min`,
+      });
+    }
     setSimulating(false);
     if (simIntervalRef.current) clearInterval(simIntervalRef.current);
-    const c = routes[idx]?.chemin;
+    const c = r?.chemin;
     if (c?.length > 1) fitCoords(c);
   };
 
   const selectGraphAlt = (idx) => {
     setGraphActif(idx);
-    const coords = cheminToCoords(graphAlts[idx]?.chemin, quartiers);
-    if (coords.length > 1) fitCoords(coords);
+    const alt = graphAlts[idx];
+    if (alt) {
+      setRouteNotice({
+        title: idx === 0 ? "Chemin recommandé (graphe)" : `Chemin alternatif ${idx} (graphe)`,
+        subtitle: `${alt.distance} km · ~${estimateDuree(alt.distance)} min`,
+      });
+    }
+    const osrmGeom = graphAltsGeom[idx];
+    const rawCoords = osrmGeom?.chemin || [];
+    if (rawCoords.length > 1) fitCoords(rawCoords);
   };
 
   const toggleSimulation = () => {
@@ -212,17 +255,20 @@ export default function CarteScreen() {
   const graphPolylines = showGraphAlts
     ? graphAlts
         .map((alt, idx) => {
-          const coords = cheminToCoords(alt.chemin, quartiers);
+          const osrmGeom = graphAltsGeom[idx];
+          const coords = osrmGeom?.chemin || [];
           if (coords.length < 2) return null;
           const isActive = idx === graphActif;
+          // Couleurs distinctes des routes principales OSRM
+          const altColors = GRAPH_COLORS;
+          const color = altColors[idx % altColors.length];
           return {
             coords,
-            color: isActive
-              ? GRAPH_COLORS[idx % GRAPH_COLORS.length]
-              : `${GRAPH_COLORS[idx % GRAPH_COLORS.length]}88`,
-            weight: isActive ? 5 : 3,
-            dashArray: isActive ? null : "6 8",
-            opacity: isActive ? 0.95 : 0.6,
+            color: isActive ? color : `${color}77`,
+            weight: isActive ? 7 : 5,
+            casingWeight: isActive ? 11 : 9,
+            dashArray: isActive ? null : "12 8",
+            opacity: isActive ? 0.98 : 0.88,
             key: `graph-${idx}`,
           };
         })
@@ -289,6 +335,15 @@ export default function CarteScreen() {
                   {simulating ? "Arrêter simulation" : "Simuler le trajet"}
                 </Text>
               </Pressable>
+
+              {routeNotice && (
+                <View style={styles.routeNoticeBox}>
+                  <Text style={styles.routeNoticeTitle}>{routeNotice.title}</Text>
+                  {routeNotice.subtitle ? (
+                    <Text style={styles.routeNoticeSub}>{routeNotice.subtitle}</Text>
+                  ) : null}
+                </View>
+              )}
             </View>
           )}
 
@@ -300,7 +355,7 @@ export default function CarteScreen() {
                   key={i}
                   style={[
                     styles.tab,
-                    routeActif === i && { backgroundColor: ROUTE_COLORS[i] },
+                    routeActif === i && { backgroundColor: getOsrmRouteColor(i) },
                   ]}
                   onPress={() => selectRoute(i)}
                 >
@@ -401,20 +456,43 @@ export default function CarteScreen() {
               .filter(({ idx, r }) => idx !== routeActif && r.chemin?.length > 1)
               .map(({ idx, r }) => ({
                 coords: r.chemin,
-                color: `${ROUTE_COLORS[idx] || colors.bleu}99`,
-                weight: 4,
-                opacity: 0.7,
-              })),
+                color: "#ffffff",
+                weight: 8,
+                opacity: 0.95,
+              }))
+              .concat(
+                routes
+                  .map((r, idx) => ({ r, idx }))
+                  .filter(({ idx, r }) => idx !== routeActif && r.chemin?.length > 1)
+              .map(({ idx, r }) => ({
+                coords: r.chemin,
+                color: `${getOsrmRouteColor(idx)}99`,
+                weight: 5,
+                opacity: 0.9,
+              }))
+              ),
             ...(routeCourant?.chemin?.length > 1
               ? [
                   {
                     coords: routeCourant.chemin,
-                    color: ROUTE_COLORS[routeActif] || colors.orange,
-                    weight: 6,
-                    opacity: 0.9,
+                    color: "#ffffff",
+                    weight: 11,
+                    opacity: 0.96,
+                  },
+                  {
+                    coords: routeCourant.chemin,
+                    color: getOsrmRouteColor(routeActif),
+                    weight: 7,
+                    opacity: 0.98,
                   },
                 ]
               : []),
+            ...graphPolylines.map((g) => ({
+              coords: g.coords,
+              color: "#ffffff",
+              weight: g.casingWeight,
+              opacity: 0.96,
+            })),
             ...graphPolylines.map((g) => ({
               coords: g.coords,
               color: g.color,
@@ -432,12 +510,31 @@ export default function CarteScreen() {
                     [a[0], a[1]],
                     [b[0], b[1]],
                   ],
-                  color: colors.rougeTrafic,
+                  casingColor: "#ffffff",
+                  casingWeight: 9,
+                  color: TRAFFIC_COLOR,
                   weight: 5,
                   dashArray: "8 6",
                   opacity: 0.9,
                 };
               })
+              .filter(Boolean)
+              .map((t) => [
+                {
+                  coords: t.coords,
+                  color: t.casingColor,
+                  weight: t.casingWeight,
+                  opacity: 0.96,
+                },
+                {
+                  coords: t.coords,
+                  color: t.color,
+                  weight: t.weight,
+                  dashArray: t.dashArray,
+                  opacity: t.opacity,
+                },
+              ])
+              .flat()
               .filter(Boolean),
           ]}
         />
@@ -451,40 +548,95 @@ export default function CarteScreen() {
           {routes.map((r, idx) => {
             if (idx === routeActif || !r.chemin?.length) return null;
             return (
-              <Polyline
-                key={`osrm-alt-${idx}`}
-                coordinates={r.chemin.map(([lat, lon]) => ({
-                  latitude: lat,
-                  longitude: lon,
-                }))}
-                strokeColor={`${ROUTE_COLORS[idx] || colors.bleu}99`}
-                strokeWidth={4}
-              />
+              <Fragment key={`osrm-alt-${idx}`}>
+                <Polyline
+                  key={`osrm-alt-casing-${idx}`}
+                  coordinates={r.chemin.map(([lat, lon]) => ({
+                    latitude: lat,
+                    longitude: lon,
+                  }))}
+                  strokeColor="#ffffff"
+                  strokeWidth={8}
+                />
+                <Polyline
+                  key={`osrm-alt-${idx}`}
+                  coordinates={r.chemin.map(([lat, lon]) => ({
+                    latitude: lat,
+                    longitude: lon,
+                  }))}
+                  strokeColor={`${getOsrmRouteColor(idx)}EE`}
+                  strokeWidth={5}
+                  onPress={() =>
+                    setRouteNotice({
+                      title: `Itinéraire alternatif ${idx}`,
+                      subtitle: `${r.distance} km · ${r.duree || "?"} min`,
+                    })
+                  }
+                />
+              </Fragment>
             );
           })}
 
           {routeCourant?.chemin?.length > 1 && (
-            <Polyline
-              coordinates={routeCourant.chemin.map(([lat, lon]) => ({
-                latitude: lat,
-                longitude: lon,
-              }))}
-              strokeColor={ROUTE_COLORS[routeActif] || colors.orange}
-              strokeWidth={6}
-            />
+            <Fragment key="osrm-main">
+              <Polyline
+                coordinates={routeCourant.chemin.map(([lat, lon]) => ({
+                  latitude: lat,
+                  longitude: lon,
+                }))}
+                strokeColor="#ffffff"
+                strokeWidth={11}
+              />
+              <Polyline
+                coordinates={routeCourant.chemin.map(([lat, lon]) => ({
+                  latitude: lat,
+                  longitude: lon,
+                }))}
+                strokeColor={getOsrmRouteColor(routeActif)}
+                strokeWidth={7}
+                onPress={() =>
+                  setRouteNotice({
+                    title: routeActif === 0 ? "Itinéraire principal" : `Itinéraire alternatif ${routeActif}`,
+                    subtitle: `${routeCourant.distance} km · ${routeCourant.duree || "?"} min`,
+                  })
+                }
+              />
+            </Fragment>
           )}
 
-          {graphPolylines.map((g, idx) => (
-            <Polyline
-              key={g.key}
-              coordinates={g.coords.map(([lat, lon]) => ({
-                latitude: lat,
-                longitude: lon,
-              }))}
-              strokeColor={g.color}
-              strokeWidth={g.weight}
-              lineDashPattern={g.dashArray ? [6, 8] : undefined}
-            />
+          {graphPolylines.map((g) => (
+            <Fragment key={g.key}>
+              <Polyline
+                key={`${g.key}-casing`}
+                coordinates={g.coords.map(([lat, lon]) => ({
+                  latitude: lat,
+                  longitude: lon,
+                }))}
+                strokeColor="#ffffff"
+                strokeWidth={g.casingWeight}
+              />
+              <Polyline
+                key={g.key}
+                coordinates={g.coords.map(([lat, lon]) => ({
+                  latitude: lat,
+                  longitude: lon,
+                }))}
+                strokeColor={g.color}
+                strokeWidth={g.weight}
+                lineDashPattern={g.dashArray ? [6, 8] : undefined}
+                onPress={() => {
+                  const idx = Number((g.key || "").split("-")[1]);
+                  const alt = Number.isNaN(idx) ? null : graphAlts[idx];
+                  setRouteNotice({
+                    title:
+                      idx === 0
+                        ? "Chemin recommandé (graphe)"
+                        : `Chemin alternatif ${idx} (graphe)`,
+                    subtitle: alt ? `${alt.distance} km · ~${estimateDuree(alt.distance)} min` : "",
+                  });
+                }}
+              />
+            </Fragment>
           ))}
 
           {traficRoutes.map((t, idx) => {
@@ -492,16 +644,33 @@ export default function CarteScreen() {
             const b = quartiers[t.dest];
             if (!a || !b) return null;
             return (
-              <Polyline
-                key={`trafic-${idx}`}
-                coordinates={[
-                  { latitude: a[0], longitude: a[1] },
-                  { latitude: b[0], longitude: b[1] },
-                ]}
-                strokeColor={colors.rougeTrafic}
-                strokeWidth={5}
-                lineDashPattern={[8, 6]}
-              />
+              <Fragment key={`trafic-${idx}`}>
+                <Polyline
+                  key={`trafic-casing-${idx}`}
+                  coordinates={[
+                    { latitude: a[0], longitude: a[1] },
+                    { latitude: b[0], longitude: b[1] },
+                  ]}
+                  strokeColor="#ffffff"
+                  strokeWidth={9}
+                />
+                <Polyline
+                  key={`trafic-${idx}`}
+                  coordinates={[
+                    { latitude: a[0], longitude: a[1] },
+                    { latitude: b[0], longitude: b[1] },
+                  ]}
+                  strokeColor={TRAFFIC_COLOR}
+                  strokeWidth={5}
+                  lineDashPattern={[8, 6]}
+                  onPress={() =>
+                    setRouteNotice({
+                      title: "Segment avec trafic actif",
+                      subtitle: `${t.src} -> ${t.dest}`,
+                    })
+                  }
+                />
+              </Fragment>
             );
           })}
 
@@ -628,6 +797,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFEBEE",
     borderRadius: 8,
   },
-  traficTitle: { fontSize: 12, color: colors.rougeTrafic, fontWeight: "600" },
+  traficTitle: { fontSize: 12, color: TRAFFIC_COLOR, fontWeight: "600" },
   map: { flex: 1 },
+  routeNoticeBox: {
+    marginTop: 8,
+    backgroundColor: "#E0F2FE",
+    borderColor: "#7DD3FC",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  routeNoticeTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0C4A6E",
+  },
+  routeNoticeSub: {
+    marginTop: 2,
+    fontSize: 12,
+    color: "#075985",
+  },
 });

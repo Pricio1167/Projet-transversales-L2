@@ -42,6 +42,7 @@ export default function TraficScreen({ navigation }) {
   const [traficActif, setTraficActif] = useState([]);
   const [resultat, setResultat] = useState(null);
   const [alternatives, setAlternatives] = useState([]);
+  const [trajetImpacte, setTrajetImpacte] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const chargerTrafic = async () => {
@@ -60,27 +61,42 @@ export default function TraficScreen({ navigation }) {
     const routeEmbouteillee = src && dest ? [src, dest] : null;
     const alt = await getCheminsAlternatifs(depart, destination, routeEmbouteillee);
     if (alt.chemins?.length > 0) {
-      setResultat(alt.chemins[0]);
+      const meilleur = alt.chemins[0];
+      setResultat(meilleur);
       setAlternatives(alt.chemins.slice(1));
       setGraphResults(alt);
+      // Détecter si le trajet principal est impacté par l'embouteillage
+      const impacte =
+        alt.alerte?.route != null ||
+        meilleur.contient_trafic === true ||
+        (meilleur.routes_trafic && meilleur.routes_trafic.length > 0);
+      setTrajetImpacte(!!src && !!dest && impacte);
+    } else if (alt.erreur) {
+      setErreur(alt.erreur);
     }
     if (src && dest) setTraficRoute([src, dest]);
   };
 
   const appliquer = async () => {
-    if (!traficSrc || !traficDest || !traficPoids) {
+    const poids = parseFloat(traficPoids);
+    if (!traficSrc || !traficDest || Number.isNaN(poids) || poids <= 0) {
       setErreur("Remplissez tous les champs");
       return;
     }
     setErreur("");
     setMsg("");
+    setTrajetImpacte(false);
     setLoading(true);
-    const data = await simulerTrafic(traficSrc, traficDest, traficPoids);
+    const data = await simulerTrafic(traficSrc, traficDest, poids);
     if (data.erreur) setErreur(data.erreur);
     else {
+      const appliedSrc = data.src || traficSrc;
+      const appliedDest = data.dest || traficDest;
       setMsg(data.message || "Trafic applique");
+      setTraficSrc(appliedSrc);
+      setTraficDest(appliedDest);
       await chargerTrafic();
-      await recalculerAlternatives(traficSrc, traficDest);
+      await recalculerAlternatives(appliedSrc, appliedDest);
     }
     setLoading(false);
   };
@@ -95,6 +111,7 @@ export default function TraficScreen({ navigation }) {
     else {
       setMsg(data.message || "Route restauree");
       await chargerTrafic();
+      setTrajetImpacte(false);
       setTraficRoute(null);
       if (depart && destination) await recalculerAlternatives(null, null);
     }
@@ -105,7 +122,7 @@ export default function TraficScreen({ navigation }) {
       <Text style={styles.title}>Simulation de trafic</Text>
       <Text style={styles.sub}>
         Choisir deux quartiers <Text style={styles.bold}>voisins</Text> (rue
-        directe). Ex. : 67 Hectares ↔ Isotry
+        directe). Exemple : 67 Hectares ↔ Isotry
       </Text>
 
       <View style={styles.card}>
@@ -176,6 +193,42 @@ export default function TraficScreen({ navigation }) {
           </View>
         )}
 
+        {/* Alerte explicite quand le trajet principal passe par la zone embouteillée */}
+        {trajetImpacte && alternatives.length > 0 && (
+          <View style={styles.trajetImpacteBox}>
+            <Text style={styles.trajetImpacteTitle}>
+              Le trajet {depart} → {destination} traverse la zone perturbée {traficSrc} → {traficDest}.
+            </Text>
+            <Text style={styles.trajetImpacteSub}>
+              {alternatives.length} itinéraire(s) alternatif(s) disponible(s) :
+            </Text>
+            {alternatives.slice(0, 2).map((alt, i) => (
+              <Pressable key={i} style={styles.altImpacteItem} onPress={() => setResultat(alt)}>
+                <Text style={styles.altImpacteLabel}>
+                  Alt. {i + 1} — {alt.distance} km{alt.evite_trafic ? " · Sans trafic ✓" : ""}
+                </Text>
+                <Text style={styles.altImpacteChemin}>
+                  {alt.chemin?.slice(0, 3).join(" → ")}…
+                </Text>
+              </Pressable>
+            ))}
+            <PrimaryButton
+              label="Voir sur la carte"
+              onPress={() =>
+                navigation.navigate("Carte", {
+                  depart,
+                  destination,
+                  autoCalc: true,
+                  showAlternatives: true,
+                  preferAlt: true,
+                })
+              }
+              color={colors.vert}
+              style={{ marginTop: 10 }}
+            />
+          </View>
+        )}
+
         {resultat?.chemin && (
           <View style={styles.result}>
             <Text style={styles.resultTitle}>
@@ -194,6 +247,7 @@ export default function TraficScreen({ navigation }) {
                   destination,
                   autoCalc: true,
                   showAlternatives: true,
+                  preferAlt: true,
                 })
               }
               color={colors.violet}
@@ -340,4 +394,39 @@ const styles = StyleSheet.create({
   },
   traficRoute: { fontWeight: "700", fontSize: 13 },
   traficMeta: { fontSize: 11, color: colors.texteMuted, marginTop: 4 },
+  trajetImpacteBox: {
+    marginTop: 14,
+    backgroundColor: "#FFEBEE",
+    borderLeftWidth: 5,
+    borderLeftColor: colors.rougeTrafic,
+    borderRadius: 12,
+    padding: 14,
+  },
+  trajetImpacteTitle: {
+    fontWeight: "700",
+    fontSize: 13,
+    color: "#B71C1C",
+    marginBottom: 6,
+  },
+  trajetImpacteSub: {
+    fontSize: 12,
+    color: "#C62828",
+    marginBottom: 8,
+  },
+  altImpacteItem: {
+    backgroundColor: "#FFF3E0",
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 6,
+  },
+  altImpacteLabel: {
+    fontWeight: "700",
+    fontSize: 12,
+    color: colors.vert,
+  },
+  altImpacteChemin: {
+    fontSize: 11,
+    color: colors.texteMuted,
+    marginTop: 2,
+  },
 });

@@ -1,7 +1,7 @@
 // components/Navbar.jsx
 import { NavLink, useNavigate } from "react-router-dom";
 import { logout, getUser, isAdmin } from "../api";
-import { Home, Navigation, Share2, AlertTriangle, BarChart2, Map, Shield, User, LogOut } from "lucide-react";
+import { Home, Navigation, AlertTriangle, BarChart2, Map, Shield, User, LogOut } from "lucide-react";
 
 const styles = {
   nav: {
@@ -108,7 +108,6 @@ function Navbar() {
   const navItems = [
     { to: "/", label: "Accueil", icon: Home, end: true },
     { to: "/trajet", label: "Trajet", icon: Navigation },
-    { to: "/graphe", label: "Graphe", icon: Share2 },
     { to: "/trafic", label: "Trafic", icon: AlertTriangle },
     { to: "/performances", label: "Performances", icon: BarChart2 },
     { to: "/carte", label: "Carte", icon: Map },

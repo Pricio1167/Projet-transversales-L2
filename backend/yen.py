@@ -4,10 +4,13 @@ import heapq
 
 def dijkstra_for_yen(graph, source, target, forbidden_edges=None, forbidden_nodes=None):
     """Dijkstra modifié pour éviter certaines arêtes ou nœuds"""
-    if forbidden_edges is None:
-        forbidden_edges = []
-    if forbidden_nodes is None:
-        forbidden_nodes = []
+    if source == target:
+        return [source], 0.0
+
+    forbidden_edges = set(forbidden_edges or [])
+    forbidden_nodes = set(forbidden_nodes or [])
+    if source in forbidden_nodes or target in forbidden_nodes:
+        return None, None
     
     distances = {node: float('inf') for node in graph.nodes}
     distances[source] = 0
@@ -54,50 +57,65 @@ def dijkstra_for_yen(graph, source, target, forbidden_edges=None, forbidden_node
 
 def k_shortest_paths(graph, source, target, k=3):
     """Algorithme de Yen - trouve les K-plus courts chemins"""
+    if k <= 0:
+        return []
+    if source not in graph.nodes or target not in graph.nodes:
+        return []
+
     premier_chemin, premiere_distance = dijkstra_for_yen(graph, source, target)
-    
     if premier_chemin is None:
         return []
-    
-    k_chemins = [(premier_chemin, premiere_distance)]
+
+    chemins = [(premier_chemin, premiere_distance)]
+    # Min-heap de candidats: (distance, ordre, chemin)
     candidats = []
-    
-    for i in range(1, k):
-        chemin_precedent = k_chemins[i-1][0]
-        
+    seen = {tuple(premier_chemin)}
+    order = 0
+
+    for _ in range(1, k):
+        chemin_precedent = chemins[-1][0]
+
         for j in range(len(chemin_precedent) - 1):
-            noeud_racine = chemin_precedent[:j+1]
-            aretes_interdites = []
-            
-            for chemin in k_chemins:
-                if len(chemin[0]) > j + 1 and chemin[0][:j+1] == noeud_racine:
-                    src = chemin[0][j]
-                    dest = chemin[0][j+1]
-                    aretes_interdites.append((src, dest))
-            
-            noeuds_interdits = noeud_racine[:-1]
+            noeud_racine = chemin_precedent[: j + 1]
             spur_node = noeud_racine[-1]
-            
+
+            aretes_interdites = set()
+            for chemin, _dist in chemins:
+                if len(chemin) > j + 1 and chemin[: j + 1] == noeud_racine:
+                    aretes_interdites.add((chemin[j], chemin[j + 1]))
+
+            noeuds_interdits = set(noeud_racine[:-1])
+
             spur_chemin, spur_distance = dijkstra_for_yen(
-                graph, spur_node, target,
+                graph,
+                spur_node,
+                target,
                 forbidden_edges=aretes_interdites,
-                forbidden_nodes=noeuds_interdits
+                forbidden_nodes=noeuds_interdits,
             )
-            
-            if spur_chemin is not None:
-                chemin_complet = noeud_racine[:-1] + spur_chemin
-                distance_complete = calculer_distance_chemin(graph, chemin_complet)
-                candidats.append((chemin_complet, distance_complete))
-        
+
+            if spur_chemin is None:
+                continue
+
+            chemin_complet = noeud_racine[:-1] + spur_chemin
+            key = tuple(chemin_complet)
+            if key in seen:
+                continue
+
+            # Distance totale = coût de la racine + coût du spur
+            cout_racine = calculer_distance_chemin(graph, noeud_racine)
+            distance_complete = round(cout_racine + spur_distance, 2)
+            heapq.heappush(candidats, (distance_complete, order, chemin_complet))
+            order += 1
+            seen.add(key)
+
         if not candidats:
             break
-        
-        candidats.sort(key=lambda x: x[1])
-        meilleur_candidat = candidats.pop(0)
-        k_chemins.append(meilleur_candidat)
-        candidats = [c for c in candidats if c[0] != meilleur_candidat[0]]
-    
-    return k_chemins
+
+        distance_best, _ord, meilleur_chemin = heapq.heappop(candidats)
+        chemins.append((meilleur_chemin, round(distance_best, 2)))
+
+    return chemins
 
 
 def calculer_distance_chemin(graph, chemin):
